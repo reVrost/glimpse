@@ -4,25 +4,46 @@
 
 It is designed for "Vibecoding"—maintaining flow state while getting instant feedback on correctness, security, and idiomatic Go patterns.
 
-## Features
+## 🚀 Installation
 
-- 🔄 **Real-time file watching** with intelligent debouncing
-- 📝 **Git diff capture** for staged and unstaged changes  
-- 📋 **Log tailing** integration with structured slog output
-- 🤖 **Multi-provider LLM support** (OpenAI, Gemini, Ollama)
-- ⚙️ **Minimal YAML configuration** with sensible defaults
-- 🎯 **Focused reviews** for bugs, performance, and security issues
-- 🖥️ **Simple stdout interface** with optional chat mode
+### Go Install (Recommended)
 
-## Installation
+```bash
+go install github.com/revrost/glimpse@latest
+```
+
+This installs `glimpse` to your `GOPATH/bin` (usually `~/go/bin/`). Make sure `~/go/bin` is in your `PATH`.
+
+### Download Binaries
+
+Grab pre-built binaries from the [Releases page](https://github.com/revrost/glimpse/releases):
+- Linux: `glimpse-linux-amd64`
+- macOS: `glimpse-darwin-amd64` (Intel) or `glimpse-darwin-arm64` (Apple Silicon)  
+- Windows: `glimpse-windows-amd64.exe`
+
+```bash
+# Make executable (Linux/macOS)
+chmod +x glimpse-*
+mv glimpse-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) glimpse
+```
 
 ### From Source
 
 ```bash
 git clone https://github.com/revrost/glimpse
 cd glimpse
-go build -o glimpse
+make build  # or: go build -o glimpse .
 ```
+
+## Features
+
+- 🔄 **Real-time file watching** with intelligent debouncing
+- 📝 **Git diff capture** for staged and unstaged changes  
+- 📋 **Log tailing** integration with structured slog output
+- 🤖 **Multi-provider LLM support** (OpenAI, Z.AI, Gemini, Ollama)
+- ⚙️ **Minimal YAML configuration** with sensible defaults
+- 🎯 **Focused reviews** for bugs, performance, and security issues
+- 🖥️ **Simple stdout interface** with optional chat mode
 
 ## Quick Start
 
@@ -59,8 +80,27 @@ go build -o glimpse
 
 4. **Start Glimpse**
    ```bash
+   glimpse
+   # or if using local build:
    ./glimpse
    ```
+
+## Managing Your Installation
+
+### Update to Latest Version
+```bash
+go install github.com/revrost/glimpse@latest
+```
+
+### Check Version
+```bash
+glimpse -version
+```
+
+### Uninstall
+```bash
+rm $(which glimpse)
+```
 
 5. **Make Code Changes**
    

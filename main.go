@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -14,7 +15,22 @@ import (
 	"github.com/revrost/glimpse/watcher"
 )
 
+var (
+	version    = "dev"
+	commit     = "unknown"
+	buildTime  = "unknown"
+)
+
 func main() {
+	// Parse command line flags
+	showVersion := flag.Bool("version", false, "Show version information")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("Glimpse v%s (commit: %s, built: %s)\n", version, commit, buildTime)
+		os.Exit(0)
+	}
+
 	fmt.Println("Glimpse: AI-Powered Micro-Reviewer")
 	
 	// Load configuration

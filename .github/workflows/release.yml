@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64  # Windows ARM64 is less common
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Build
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        VERSION: ${{ steps.version.outputs.VERSION }}
+      run: |
+        VERSION=${VERSION} COMMIT=${{ github.sha }} BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S') \
+        go build -ldflags "-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.buildTime=${BUILD_TIME}" \
+        -o glimpse-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} .
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: glimpse-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: glimpse-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: ./artifacts
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: Glimpse ${{ steps.version.outputs.VERSION }}
+        body: |
+          ## Glimpse ${{ steps.version.outputs.VERSION }}
+          
+          AI-powered micro-reviewer daemon that watches file changes and provides instant code reviews.
+          
+          ### Installation
+          
+          **Go Install (Recommended):**
+          ```bash
+          go install github.com/revrost/glimpse@${{ steps.version.outputs.VERSION }}
+          ```
+          
+          **Download binaries:**
+          - Linux: `glimpse-linux-amd64`
+          - macOS: `glimpse-darwin-amd64` (Intel) or `glimpse-darwin-arm64` (Apple Silicon)
+          - Windows: `glimpse-windows-amd64.exe`
+          
+          Make the binary executable: `chmod +x glimpse-*`
+          
+          ### What's New
+          
+          See [CHANGELOG.md](https://github.com/revrost/glimpse/blob/main/CHANGELOG.md) for details.
+        files: |
+          artifacts/*/glimpse-*
+        draft: false
+        prerelease: ${{ contains(steps.version.outputs.VERSION, 'beta') || contains(steps.version.outputs.VERSION, 'alpha') }}
