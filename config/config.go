@@ -11,10 +11,10 @@ import (
 
 // Config holds the complete application configuration
 type Config struct {
-	Watch   []string    `yaml:"watch"`
-	Ignore  []string    `yaml:"ignore"`
-	Logs    LogsConfig  `yaml:"logs"`
-	LLM     LLMConfig   `yaml:"llm"`
+	Watch  []string   `yaml:"watch"`
+	Ignore []string   `yaml:"ignore"`
+	Logs   LogsConfig `yaml:"logs"`
+	LLM    LLMConfig  `yaml:"llm"`
 }
 
 // LogsConfig holds log scraping configuration

@@ -17,9 +17,9 @@ import (
 )
 
 var (
-	version    = "dev"
-	commit     = "unknown"
-	buildTime  = "unknown"
+	version   = "dev"
+	commit    = "unknown"
+	buildTime = "unknown"
 )
 
 func main() {
@@ -172,6 +172,15 @@ func processBatch(events []watcher.FileEvent, cfg *config.Config, llmClient *llm
 		context.WriteString(diff.Content)
 		context.WriteString("\n\n")
 	}
+	
+	// Always display the git diff being sent to LLM for audit/debug
+	fmt.Println("\n=== Git diff being sent to LLM ===")
+	fmt.Printf("Files changed: %v\n", changedFiles)
+	for _, diff := range allDiffs {
+		fmt.Printf("\n--- File: %s ---\n", diff.FilePath)
+		fmt.Println(diff.Content)
+	}
+	fmt.Println("=== END GIT DIFF ===")
 	
 	context.WriteString(fmt.Sprintf("Recent Runtime Logs (tail -n %d):\n", cfg.Logs.Lines))
 	context.WriteString(recentLogs)

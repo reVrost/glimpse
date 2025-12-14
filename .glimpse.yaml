@@ -1,4 +1,5 @@
 watch:
+  - "./*.go"
   - "./internal/**/*.go"
   - "./test/**/*.go"
 ignore:
