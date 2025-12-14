@@ -134,8 +134,6 @@ func processEvent(event watcher.FileEvent, cfg *config.Config, llmClient *llm.Cl
 		Task:         task,
 	}
 	
-	fmt.Printf("Analyzing with %s (%s)...\n", cfg.LLM.Provider, cfg.LLM.Model)
-	
 	respChan := llmClient.Generate(req)
 	resp := <-respChan
 	if resp.Error != nil {

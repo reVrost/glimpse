@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"time"
+
+	"github.com/revrost/glimpse/ui"
 )
 
 // Config holds the LLM configuration
@@ -50,9 +54,37 @@ func (c *Client) Generate(req GenerateRequest) <-chan GenerateResponse {
 	go func() {
 		defer close(respChan)
 
-		var content string
-		var err error
+		// Initialize markdown renderer
+		markdownRenderer, err := ui.NewMarkdownRenderer()
+		if err != nil {
+			respChan <- GenerateResponse{
+				Content: "",
+				Error:   fmt.Errorf("failed to initialize markdown renderer: %w", err),
+			}
+			return
+		}
 
+		// Start loading animation
+		loadingText := fmt.Sprintf("Analyzing with %s (%s)...", c.config.Provider, c.config.Model)
+		spinner := ui.NewSpinner(loadingText)
+		
+		// Channel to communicate with spinner goroutine
+		spinnerChan := make(chan bool, 1)
+		
+		// Start spinner in goroutine
+		go func() {
+			for {
+				select {
+				case <-spinnerChan:
+					return
+				case <-time.After(100 * time.Millisecond):
+					fmt.Printf("\r%s", spinner.Tick())
+				}
+			}
+		}()
+
+		// Make the API call
+		var content string
 		switch c.config.Provider {
 		case "openai":
 			content, err = c.generateOpenAI(req)
@@ -62,6 +94,15 @@ func (c *Client) Generate(req GenerateRequest) <-chan GenerateResponse {
 			content, err = c.generateZAI(req)
 		default:
 			err = fmt.Errorf("unsupported provider: %s", c.config.Provider)
+		}
+
+		// Stop spinner
+		spinnerChan <- true
+		fmt.Printf("\r%s\n", strings.Repeat(" ", len(loadingText)+20)) // Clear spinner line
+
+		// Render content with markdown if successful
+		if err == nil {
+			content = markdownRenderer.RenderResponse(content)
 		}
 
 		respChan <- GenerateResponse{
