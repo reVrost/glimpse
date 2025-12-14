@@ -142,6 +142,8 @@ func (w *Watcher) Start() {
 						delete(debounceTimers, normalizedPath)
 					default:
 						fmt.Printf("Debounce channel full for: %s\n", normalizedPath)
+						// Clean up timer reference
+						delete(debounceTimers, normalizedPath)
 					}
 				})
 

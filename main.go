@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/revrost/glimpse/config"
 	"github.com/revrost/glimpse/git"
@@ -74,18 +75,112 @@ func main() {
 	// Start the watcher
 	fileWatcher.Start()
 	
-	// Main event loop
+	// Main event loop with batching
+	var pendingEvents []watcher.FileEvent
+	batchTimer := time.NewTimer(cfg.GetDebounceDuration())
+	
 	for {
 		select {
 		case event := <-fileWatcher.Events():
-			// Process file change
-			fmt.Printf("\n--- Reviewing: %s ---\n", event.Path)
-			processEvent(event, cfg, llmClient, logTailer)
+			// Add to pending batch
+			pendingEvents = append(pendingEvents, event)
+			
+			// Reset batch timer
+			if !batchTimer.Stop() {
+				<-batchTimer.C
+			}
+			batchTimer.Reset(cfg.GetDebounceDuration())
+			fmt.Printf("Added to batch: %s (total: %d)\n", event.Path, len(pendingEvents))
+			
+		case <-batchTimer.C:
+			// Process batch if we have events
+			if len(pendingEvents) > 0 {
+				fmt.Printf("\n--- Processing batch of %d changes ---\n", len(pendingEvents))
+				processBatch(pendingEvents, cfg, llmClient, logTailer)
+				pendingEvents = nil
+			}
 			
 		case <-sigChan:
 			fmt.Println("\nShutting down Glimpse...")
 			return
 		}
+	}
+}
+
+// processBatch handles multiple file change events in one LLM call
+func processBatch(events []watcher.FileEvent, cfg *config.Config, llmClient *llm.Client, logTailer *logs.Tailer) {
+	if len(events) == 0 {
+		return
+	}
+	
+	// Collect all diffs from all files
+	var allDiffs []git.Diff
+	var changedFiles []string
+	
+	for _, event := range events {
+		diffs, err := git.GetDiff(event.Path)
+		if err != nil {
+			fmt.Printf("Error getting git diff for %s: %v\n", event.Path, err)
+			continue
+		}
+		
+		if len(diffs) > 0 {
+			allDiffs = append(allDiffs, diffs...)
+			changedFiles = append(changedFiles, event.Path)
+		}
+	}
+	
+	if len(allDiffs) == 0 {
+		fmt.Println("No changes detected in batch")
+		return
+	}
+	
+	// Get recent logs
+	var recentLogs string
+	logContent, err := logTailer.Tail()
+	if err != nil {
+		fmt.Printf("Warning: Could not read log file: %v\n", err)
+		recentLogs = "No logs available"
+	} else {
+		recentLogs = logContent
+	}
+	
+	// Build context with all diffs
+	var context strings.Builder
+	context.WriteString(fmt.Sprintf("=== BATCH ANALYSIS: %d files changed ===\n", len(changedFiles)))
+	for i, filePath := range changedFiles {
+		context.WriteString(fmt.Sprintf("%d. %s\n", i+1, filePath))
+	}
+	context.WriteString("\n")
+	
+	context.WriteString("=== ALL GIT DIFFS ===\n")
+	for _, diff := range allDiffs {
+		context.WriteString(fmt.Sprintf("File: %s\n", diff.FilePath))
+		context.WriteString("Git Diff:\n")
+		context.WriteString(diff.Content)
+		context.WriteString("\n\n")
+	}
+	
+	context.WriteString(fmt.Sprintf("Recent Runtime Logs (tail -n %d):\n", cfg.Logs.Lines))
+	context.WriteString(recentLogs)
+	
+	// Send to LLM with all changes
+	task := fmt.Sprintf("Review the batch of %d file changes. If the logs show errors related to this logic, highlight them immediately. Be concise.", len(changedFiles))
+	
+	req := llm.GenerateRequest{
+		SystemPrompt: cfg.LLM.SystemPrompt,
+		Context:      context.String(),
+		Task:         task,
+	}
+	
+	fmt.Printf("Analyzing batch of %d changes with %s (%s)...\n", len(changedFiles), cfg.LLM.Provider, cfg.LLM.Model)
+	
+	respChan := llmClient.Generate(req)
+	resp := <-respChan
+	if resp.Error != nil {
+		fmt.Printf("LLM error: %v\n", resp.Error)
+	} else {
+		fmt.Println(resp.Content)
 	}
 }
 

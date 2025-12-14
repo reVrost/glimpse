@@ -79,7 +79,7 @@ func Load() (*Config, error) {
 	return config, nil
 }
 
-// GetDebounceDuration returns the debounce duration for file changes
+// GetDebounceDuration returns debounce duration for file changes
 func (c *Config) GetDebounceDuration() time.Duration {
-	return 500 * time.Millisecond
+	return 2 * time.Second // Increased to prevent multiple LLM calls
 }
