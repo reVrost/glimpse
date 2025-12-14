@@ -1,0 +1,32 @@
+# Glimpse Configuration Example
+# Copy this file to .glimpse.yaml in your repository root
+
+# File patterns to watch for changes
+# Use ** for recursive patterns
+watch:
+  - "./internal/**/*.go"    # Watch Go files in internal directory
+  - "./pkg/**/*.go"         # Watch Go files in pkg directory
+  - "*.go"                  # Watch Go files in root
+
+# File patterns to ignore
+ignore:
+  - "*_test.go"             # Ignore test files
+  - "*.generated.go"         # Ignore generated files
+  - "vendor/**"             # Ignore vendor directory
+  - ".git/**"              # Ignore git directory
+
+# Log file configuration
+logs:
+  file: "./tmp/server.log"   # Log file to tail (where your app pipes stdout)
+  lines: 50                 # Number of recent log lines to include in context
+
+# LLM provider configuration
+llm:
+  provider: "openai"         # Options: openai, gemini (coming soon), ollama (coming soon), zai
+  model: "gpt-4o"          # Model to use (for zai: glm-4.6, glm-4-air, etc.)
+  
+  # API key (optional - can use environment variables instead)
+  # api_key: "your-api-key-here"
+  
+  # System prompt for the LLM
+  system_prompt: "You are a Principal Go Engineer. Review strictly for bugs, performance issues, and security concerns. Be concise."

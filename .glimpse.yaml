@@ -1,0 +1,12 @@
+watch:
+  - "./internal/**/*.go"
+  - "./test/**/*.go"
+ignore:
+  - "*_test.go"
+logs:
+  file: "./tmp/server.log"
+  lines: 20
+llm:
+  provider: "openai"
+  model: "gpt-4o"
+  system_prompt: "You are a Principal Go Engineer. Review strictly for bugs, performance issues, and security concerns. Be concise."
