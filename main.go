@@ -77,7 +77,13 @@ func main() {
 	
 	// Main event loop with batching
 	var pendingEvents []watcher.FileEvent
-	batchTimer := time.NewTimer(cfg.GetDebounceDuration())
+	var batchTimer *time.Timer
+	
+	// Start with a stopped timer
+	batchTimer = time.NewTimer(0)
+	if !batchTimer.Stop() {
+		<-batchTimer.C
+	}
 	
 	for {
 		select {
@@ -85,12 +91,13 @@ func main() {
 			// Add to pending batch
 			pendingEvents = append(pendingEvents, event)
 			
-			// Reset batch timer
-			if !batchTimer.Stop() {
-				<-batchTimer.C
+			// Stop existing timer if any
+			if batchTimer != nil {
+				batchTimer.Stop()
 			}
-			batchTimer.Reset(cfg.GetDebounceDuration())
-			fmt.Printf("Added to batch: %s (total: %d)\n", event.Path, len(pendingEvents))
+			
+			// Start new timer
+			batchTimer = time.NewTimer(cfg.GetDebounceDuration())
 			
 		case <-batchTimer.C:
 			// Process batch if we have events
@@ -98,6 +105,11 @@ func main() {
 				fmt.Printf("\n--- Processing batch of %d changes ---\n", len(pendingEvents))
 				processBatch(pendingEvents, cfg, llmClient, logTailer)
 				pendingEvents = nil
+			}
+			// Reset timer for next batch
+			batchTimer = time.NewTimer(0)
+			if !batchTimer.Stop() {
+				<-batchTimer.C
 			}
 			
 		case <-sigChan:
@@ -183,57 +195,9 @@ func processBatch(events []watcher.FileEvent, cfg *config.Config, llmClient *llm
 		fmt.Println(resp.Content)
 	}
 }
-
-// processEvent handles a file change event
-func processEvent(event watcher.FileEvent, cfg *config.Config, llmClient *llm.Client, logTailer *logs.Tailer) {
-	// Get git diff
-	diffs, err := git.GetDiff(event.Path)
-	if err != nil {
-		fmt.Printf("Error getting git diff: %v\n", err)
-		return
-	}
-	
-	if len(diffs) == 0 {
-		fmt.Println("No changes detected")
-		return
-	}
-	
-	// Get recent logs
-	var recentLogs string
-	logContent, err := logTailer.Tail()
-	if err != nil {
-		fmt.Printf("Warning: Could not read log file: %v\n", err)
-		recentLogs = "No logs available"
-	} else {
-		recentLogs = logContent
-	}
-	
-	// Build context for LLM
-	var context strings.Builder
-	for _, diff := range diffs {
-		context.WriteString(fmt.Sprintf("File: %s\n", diff.FilePath))
-		context.WriteString("Git Diff:\n")
-		context.WriteString(diff.Content)
-		context.WriteString("\n\n")
-	}
-	
-	context.WriteString(fmt.Sprintf("Recent Runtime Logs (tail -n %d):\n", cfg.Logs.Lines))
-	context.WriteString(recentLogs)
-	
-	// Send to LLM
-	task := "Review the diff. If the logs show errors related to this logic, highlight them immediately. Be concise."
-	
-	req := llm.GenerateRequest{
-		SystemPrompt: cfg.LLM.SystemPrompt,
-		Context:      context.String(),
-		Task:         task,
-	}
-	
-	respChan := llmClient.Generate(req)
-	resp := <-respChan
-	if resp.Error != nil {
-		fmt.Printf("LLM error: %v\n", resp.Error)
-	} else {
-		fmt.Println(resp.Content)
-	}
-}
+// Batch test change
+// Another test change
+// Debug test change
+// Fixed timer test
+// Debug main loop test
+// Simplified timer test

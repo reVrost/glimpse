@@ -36,6 +36,7 @@ func Load() (*Config, error) {
 	// Default configuration
 	config := &Config{
 		Watch: []string{
+			"./*.go",
 			"./internal/**/*.go",
 			"./pkg/**/*.go",
 		},

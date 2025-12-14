@@ -103,11 +103,8 @@ func (w *Watcher) Events() <-chan FileEvent {
 	return w.events
 }
 
-// Start begins watching for file changes with debouncing
+// Start begins watching for file changes (no debouncing - handled in main loop)
 func (w *Watcher) Start() {
-	debounceTimers := make(map[string]*time.Timer)
-	debounceChan := make(chan string, 100)
-
 	go func() {
 		for {
 			select {
@@ -116,36 +113,16 @@ func (w *Watcher) Start() {
 					return
 				}
 				
-				fmt.Printf("FS Event: %s\n", event.Name)
-				
 				// Skip if event should be ignored
 				if w.shouldIgnore(event.Name) {
-					fmt.Printf("Ignoring event: %s\n", event.Name)
 					continue
 				}
 
 				// Normalize path to handle editor temporary files
 				normalizedPath := w.normalizePath(event.Name)
-				fmt.Printf("Processing event: %s (normalized: %s)\n", event.Name, normalizedPath)
 
-				// Cancel existing timer for this file if any
-				if timer, exists := debounceTimers[normalizedPath]; exists {
-					timer.Stop()
-				}
-				
-				// Create new timer for this file
-				debounceTimers[normalizedPath] = time.AfterFunc(w.config.Debounce, func() {
-					select {
-					case debounceChan <- normalizedPath:
-						fmt.Printf("Debounced event sent: %s\n", normalizedPath)
-						// Clean up timer reference
-						delete(debounceTimers, normalizedPath)
-					default:
-						fmt.Printf("Debounce channel full for: %s\n", normalizedPath)
-						// Clean up timer reference
-						delete(debounceTimers, normalizedPath)
-					}
-				})
+				// Send event immediately (batching handled in main loop)
+				w.events <- FileEvent{Path: normalizedPath}
 
 			case err, ok := <-w.watcher.Errors:
 				if !ok {
@@ -153,13 +130,6 @@ func (w *Watcher) Start() {
 				}
 				fmt.Printf("Watcher error: %v\n", err)
 			}
-		}
-	}()
-
-	// Process debounced events
-	go func() {
-		for path := range debounceChan {
-			w.events <- FileEvent{Path: path}
 		}
 	}()
 }
