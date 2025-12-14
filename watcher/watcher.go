@@ -105,8 +105,8 @@ func (w *Watcher) Events() <-chan FileEvent {
 
 // Start begins watching for file changes with debouncing
 func (w *Watcher) Start() {
-	var timer *time.Timer
-	debounceChan := make(chan string, 1)
+	debounceTimers := make(map[string]*time.Timer)
+	debounceChan := make(chan string, 100)
 
 	go func() {
 		for {
@@ -124,20 +124,24 @@ func (w *Watcher) Start() {
 					continue
 				}
 
-				fmt.Printf("Processing event: %s\n", event.Name)
+				// Normalize path to handle editor temporary files
+				normalizedPath := w.normalizePath(event.Name)
+				fmt.Printf("Processing event: %s (normalized: %s)\n", event.Name, normalizedPath)
 
-				// Debounce logic
-				if timer != nil {
+				// Cancel existing timer for this file if any
+				if timer, exists := debounceTimers[normalizedPath]; exists {
 					timer.Stop()
 				}
 				
-				timer = time.AfterFunc(w.config.Debounce, func() {
+				// Create new timer for this file
+				debounceTimers[normalizedPath] = time.AfterFunc(w.config.Debounce, func() {
 					select {
-					case debounceChan <- event.Name:
-						fmt.Printf("Debounced event sent: %s\n", event.Name)
+					case debounceChan <- normalizedPath:
+						fmt.Printf("Debounced event sent: %s\n", normalizedPath)
+						// Clean up timer reference
+						delete(debounceTimers, normalizedPath)
 					default:
-						// Channel already has a pending event
-						fmt.Printf("Debounce channel full for: %s\n", event.Name)
+						fmt.Printf("Debounce channel full for: %s\n", normalizedPath)
 					}
 				})
 
@@ -156,6 +160,35 @@ func (w *Watcher) Start() {
 			w.events <- FileEvent{Path: path}
 		}
 	}()
+}
+
+// normalizePath handles editor temporary files by collapsing them to their source
+func (w *Watcher) normalizePath(path string) string {
+	// Handle common editor temporary file patterns
+	if strings.HasSuffix(path, "~") {
+		// Vim/emacs backup files
+		return strings.TrimSuffix(path, "~")
+	}
+	if strings.HasSuffix(path, ".swp") {
+		// Vim swap files
+		return strings.TrimSuffix(path, ".swp")
+	}
+	if strings.HasSuffix(path, ".tmp") {
+		// Generic temporary files
+		return strings.TrimSuffix(path, ".tmp")
+	}
+	if strings.HasPrefix(filepath.Base(path), ".#") {
+		// Emacs lock files
+		return filepath.Join(filepath.Dir(path), strings.TrimPrefix(filepath.Base(path), ".#"))
+	}
+	if strings.HasPrefix(filepath.Base(path), "#") && strings.HasSuffix(filepath.Base(path), "#") {
+		// Emacs auto-save files
+		basename := strings.TrimPrefix(filepath.Base(path), "#")
+		basename = strings.TrimSuffix(basename, "#")
+		return filepath.Join(filepath.Dir(path), basename)
+	}
+	
+	return path
 }
 
 // shouldIgnore checks if a file should be ignored
