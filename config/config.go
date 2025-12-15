@@ -74,6 +74,8 @@ func Load() (*Config, error) {
 			config.LLM.APIKey = os.Getenv("GEMINI_API_KEY")
 		case "zai":
 			config.LLM.APIKey = os.Getenv("ZAI_API_KEY")
+		case "claude":
+			config.LLM.APIKey = os.Getenv("ANTHROPIC_API_KEY")
 		}
 	}
 

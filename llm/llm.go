@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/revrost/glimpse/styles"
 	"github.com/revrost/glimpse/ui"
 )
 
@@ -78,7 +79,7 @@ func (c *Client) Generate(req GenerateRequest) <-chan GenerateResponse {
 				case <-spinnerChan:
 					return
 				case <-time.After(100 * time.Millisecond):
-					fmt.Printf("\r%s", spinner.Tick())
+					fmt.Printf("\r%s", styles.Spinner.Render(spinner.Tick()))
 				}
 			}
 		}()
@@ -92,6 +93,8 @@ func (c *Client) Generate(req GenerateRequest) <-chan GenerateResponse {
 			content, err = c.generateGemini(req)
 		case "zai":
 			content, err = c.generateZAI(req)
+		case "claude":
+			content, err = c.generateClaude(req)
 		default:
 			err = fmt.Errorf("unsupported provider: %s", c.config.Provider)
 		}
@@ -274,6 +277,102 @@ func (c *Client) generateZAI(req GenerateRequest) (string, error) {
 	}
 
 	return zaiResp.Choices[0].Message.Content, nil
+}
+
+// generateClaude handles Anthropic Claude API requests
+func (c *Client) generateClaude(req GenerateRequest) (string, error) {
+	// Claude API request structure
+	type claudeMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+
+	type claudeRequest struct {
+		Model     string         `json:"model"`
+		MaxTokens int           `json:"max_tokens"`
+		Messages  []claudeMessage `json:"messages"`
+		System    string        `json:"system,omitempty"`
+	}
+
+	type claudeResponse struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		Model      string `json:"model"`
+		StopReason string `json:"stop_reason"`
+		StopSequence string `json:"stop_sequence,omitempty"`
+		Error      *struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	// Build messages array (Claude doesn't use system role in messages)
+	messages := []claudeMessage{
+		{Role: "user", Content: req.Context + "\n\n" + req.Task},
+	}
+
+	// Create request - using claude-3-5-sonnet as default model if not specified
+	model := c.config.Model
+	if model == "" {
+		model = "claude-3-5-sonnet-20241022"
+	}
+
+	payload := claudeRequest{
+		Model:     model,
+		MaxTokens: 4096,
+		Messages:  messages,
+	}
+
+	// Add system prompt if provided
+	if req.SystemPrompt != "" {
+		payload.System = req.SystemPrompt
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Make HTTP request to Claude API
+	httpReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", c.config.APIKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var claudeResp claudeResponse
+	if err := json.Unmarshal(respBody, &claudeResp); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	if claudeResp.Error != nil {
+		return "", fmt.Errorf("API error: %s", claudeResp.Error.Message)
+	}
+
+	if len(claudeResp.Content) == 0 {
+		return "", fmt.Errorf("no response from API")
+	}
+
+	return claudeResp.Content[0].Text, nil
 }
 
 // generateGemini handles Google Gemini API requests

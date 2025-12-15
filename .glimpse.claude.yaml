@@ -1,0 +1,24 @@
+# Claude Integration Test Configuration
+
+provider: claude
+model: claude-3-5-sonnet-20241022
+api_key: ${ANTHROPIC_API_KEY}
+system_prompt: "You are a Principal Go Engineer. Review strictly for bugs, performance issues, and structured logging context."
+
+watch:
+  - "./*.go"
+  - "./internal/**/*.go"
+  - "./llm/**/*.go"
+  - "./config/**/*.go"
+  - "./git/**/*.go"
+  - "./ui/**/*.go"
+  - "./watcher/**/*.go"
+
+ignore:
+  - "*_test.go"
+  - "vendor/**"
+  - ".git/**"
+
+logs:
+  file: "./tmp/server.log"
+  lines: 50

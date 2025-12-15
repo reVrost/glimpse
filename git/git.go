@@ -2,6 +2,8 @@ package git
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os/exec"
 	"strings"
 )
@@ -14,7 +16,7 @@ type Diff struct {
 
 // GetDiff returns the git diff for the specified files or all changes if no files specified
 func GetDiff(files ...string) ([]Diff, error) {
-	var diffs []Diff
+	diffs := make([]Diff, 0) // Initialize to empty slice instead of nil
 	
 	// If no files specified, get diff for all changed files
 	if len(files) == 0 {
@@ -23,7 +25,7 @@ func GetDiff(files ...string) ([]Diff, error) {
 		cmd.Stdout = &out
 		
 		if err := cmd.Run(); err != nil {
-			return nil, err
+			return diffs, err
 		}
 		
 		// Parse output to get file list
@@ -156,4 +158,104 @@ func GetChangedFiles() ([]string, error) {
 	}
 	
 	return changedFiles, nil
+}
+
+// StagedState represents the current state of staged changes
+type StagedState struct {
+	StagedFiles []string
+	Hash        string // Hash of the staged state for change detection
+}
+
+// GetStagedState returns the current staged state with hash for change detection
+func GetStagedState() (*StagedState, error) {
+	// Get staged changes
+	cmd := exec.Command("git", "diff", "--name-only", "--cached", "HEAD")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	
+	stagedFiles := make([]string, 0) // Initialize to empty slice instead of nil
+	if out.String() != "" {
+		files := strings.Split(out.String(), "\n")
+		// Filter out empty strings
+		var filtered []string
+		for _, file := range files {
+			if file != "" {
+				filtered = append(filtered, file)
+			}
+		}
+		stagedFiles = filtered
+	}
+	
+	// Create hash for change detection
+	hasher := sha256.New()
+	for _, file := range stagedFiles {
+		hasher.Write([]byte(file))
+		
+		// Use git status instead of diff content for more stable hashing
+		// This avoids the race condition where diff content might fluctuate
+		statusCmd := exec.Command("git", "status", "--porcelain", "--", file)
+		var statusOut bytes.Buffer
+		statusCmd.Stdout = &statusOut
+		if err := statusCmd.Run(); err == nil {
+			hasher.Write(statusOut.Bytes())
+		}
+	}
+	
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	
+	return &StagedState{
+		StagedFiles: stagedFiles,
+		Hash:        hash,
+	}, nil
+}
+
+// GetStagedDiff returns only the staged diff for specified files
+func GetStagedDiff(files ...string) ([]Diff, error) {
+	diffs := make([]Diff, 0) // Initialize to empty slice instead of nil
+	
+	// If no files specified, get diff for all staged files
+	if len(files) == 0 {
+		cmd := exec.Command("git", "diff", "--name-only", "--cached", "HEAD")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		
+		if err := cmd.Run(); err != nil {
+			return diffs, err
+		}
+		
+		if out.String() != "" {
+			files = strings.Split(out.String(), "\n")
+			// Filter out empty strings
+			var filtered []string
+			for _, file := range files {
+				if file != "" {
+					filtered = append(filtered, file)
+				}
+			}
+			files = filtered
+		}
+	}
+	
+	// Get staged diff for specific files
+	for _, file := range files {
+		cmd := exec.Command("git", "diff", "--unified=3", "--cached", "HEAD", "--", file)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		
+		if err := cmd.Run(); err == nil {
+			content := out.String()
+			if content != "" {
+				diffs = append(diffs, Diff{
+					FilePath: file,
+					Content:  content,
+				})
+			}
+		}
+	}
+	
+	return diffs, nil
 }

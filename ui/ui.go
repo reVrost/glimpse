@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/revrost/glimpse/styles"
 )
 
 // LoadingModel represents a loading animation model
@@ -67,17 +67,10 @@ func (m *LoadingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model
 func (m *LoadingModel) View() string {
-	loadingStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
-		Bold(true)
-
-	textStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("250"))
-
 	frame := m.frames[m.index]
 	text := m.text
 
-	return loadingStyle.Render(frame) + " " + textStyle.Render(text)
+	return styles.Loading.Render(frame) + " " + styles.Text.Render(text)
 }
 
 // tickCmd sends a message to update the loading animation
@@ -90,10 +83,10 @@ func tickCmd() tea.Cmd {
 // RunLoadingAnimation starts a loading animation and returns a function to stop it
 func RunLoadingAnimation(text string) (*tea.Program, func()) {
 	p := tea.NewProgram(NewLoading(text), tea.WithOutput(os.Stdout))
-	
+
 	go func() {
 		if _, err := p.Run(); err != nil {
-			fmt.Printf("Error running loading animation: %v\n", err)
+			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Error running loading animation: %v", err)))
 		}
 	}()
 
@@ -126,7 +119,7 @@ func NewSpinner(text string) *SpinnerModel {
 func (m *SpinnerModel) Tick() string {
 	frame := m.frames[m.index%len(m.frames)]
 	m.index++
-	return fmt.Sprintf("%s %s", frame, m.text)
+	return styles.Spinner.Render(frame + " " + m.text)
 }
 
 // MarkdownRenderer handles markdown rendering with glamour

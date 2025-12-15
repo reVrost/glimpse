@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/revrost/glimpse/styles"
 )
 
 // Config holds the watcher configuration
@@ -44,9 +45,9 @@ func New(config Config) (*Watcher, error) {
 
 	// Add watch patterns - watch directories, not files
 	addedDirs := make(map[string]bool)
-	fmt.Printf("Processing %d watch patterns\n", len(config.Watch))
+	fmt.Println(styles.Info.Render(fmt.Sprintf("Processing %d watch patterns", len(config.Watch))))
 	for _, pattern := range config.Watch {
-		fmt.Printf("Pattern: %s\n", pattern)
+		fmt.Println(styles.Muted.Render(fmt.Sprintf("Pattern: %s", pattern)))
 		
 		// Check if pattern contains ** (recursive)
 		if strings.Contains(pattern, "**") {
@@ -57,9 +58,9 @@ func New(config Config) (*Watcher, error) {
 				baseDir = "."
 			}
 			
-			fmt.Printf("Adding directory for recursive pattern: %s\n", baseDir)
+			fmt.Println(styles.Text.Render(fmt.Sprintf("Adding directory for recursive pattern: %s", baseDir)))
 			if err := w.watcher.Add(baseDir); err != nil {
-				fmt.Printf("Failed to watch directory %s: %v\n", baseDir, err)
+				fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to watch directory %s: %v", baseDir, err)))
 				continue
 			}
 			addedDirs[baseDir] = true
@@ -67,10 +68,10 @@ func New(config Config) (*Watcher, error) {
 			// Handle standard glob pattern
 			matches, err := filepath.Glob(pattern)
 			if err != nil {
-				fmt.Printf("Glob error for pattern %s: %v\n", pattern, err)
+				fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Glob error for pattern %s: %v", pattern, err)))
 				continue
 			}
-			fmt.Printf("Glob matches for %s: %v\n", pattern, matches)
+			fmt.Println(styles.Muted.Render(fmt.Sprintf("Glob matches for %s: %v", pattern, matches)))
 			
 			for _, match := range matches {
 				// Get the directory to watch
@@ -83,13 +84,13 @@ func New(config Config) (*Watcher, error) {
 				// Add directory if not already added
 				if !addedDirs[dir] {
 					if err := w.watcher.Add(dir); err != nil {
-						fmt.Printf("Failed to watch directory %s: %v\n", dir, err)
+						fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to watch directory %s: %v", dir, err)))
 						continue
 					}
-					fmt.Printf("Watching directory: %s\n", dir)
+					fmt.Println(styles.Info.Render(fmt.Sprintf("Watching directory: %s", dir)))
 					addedDirs[dir] = true
 				} else {
-					fmt.Printf("Directory %s already being watched\n", dir)
+					fmt.Println(styles.Muted.Render(fmt.Sprintf("Directory %s already being watched", dir)))
 				}
 			}
 		}
@@ -128,7 +129,7 @@ func (w *Watcher) Start() {
 				if !ok {
 					return
 				}
-				fmt.Printf("Watcher error: %v\n", err)
+				fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Watcher error: %v", err)))
 			}
 		}
 	}()
