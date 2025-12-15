@@ -24,136 +24,122 @@ var (
 	buildTime = "unknown"
 )
 
+const (
+	maxBatchSize      = 100
+	idleTimerDuration = time.Hour
+)
+
 func main() {
-	// Parse command line flags
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(styles.CreateHeader(fmt.Sprintf("Glimpse v%s (commit: %s, built: %s)", version, commit, buildTime)))
-		os.Exit(0)
+		fmt.Println(
+			styles.CreateHeader(
+				fmt.Sprintf("Glimpse v%s (commit: %s, built: %s)", version, commit, buildTime),
+			),
+		)
+		return
 	}
 
 	fmt.Println(styles.CreateHeader("Glimpse: AI-Powered Micro-Reviewer"))
 	fmt.Println(ui.Separator(60))
 
-	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to load config: %v", err)))
+		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
 		os.Exit(1)
 	}
 
-	// Initialize components
 	llmClient := llm.New(llm.Config{
 		Provider:     cfg.LLM.Provider,
 		Model:        cfg.LLM.Model,
 		APIKey:       cfg.LLM.APIKey,
 		SystemPrompt: cfg.LLM.SystemPrompt,
 	})
+
 	logTailer := logs.New(logs.Config{
 		File:  cfg.Logs.File,
 		Lines: cfg.Logs.Lines,
 	})
 
-	// Initialize watcher
 	fileWatcher, err := watcher.New(watcher.Config{
 		Watch:    cfg.Watch,
 		Ignore:   cfg.Ignore,
 		Debounce: cfg.GetDebounceDuration(),
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to create watcher: %v", err)))
+		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
 		os.Exit(1)
 	}
 	defer fileWatcher.Close()
 
-	// Handle graceful shutdown
+	done := make(chan struct{})
+	batchChan := make(chan []watcher.FileEvent, 5)
+
+	startBatcher(
+		fileWatcher.Events(),
+		batchChan,
+		cfg.GetDebounceDuration(),
+		done,
+	)
+
+	fileWatcher.Start()
+
+	fmt.Println(
+		styles.Status.Render(
+			fmt.Sprintf("Watching %d patterns: %v", len(cfg.Watch), cfg.Watch),
+		),
+	)
+	fmt.Println(styles.Muted.Render("Press Ctrl+C to exit"))
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	fmt.Println(styles.Status.Render(fmt.Sprintf("Glimpse is watching %d patterns: %v", len(cfg.Watch), cfg.Watch)))
-	fmt.Println(styles.Muted.Render("Press Ctrl+C to exit or type to chat (experimental)"))
-
-	// Start the watcher
-	fileWatcher.Start()
-
-	// Main event loop with batching
-	var pendingEvents []watcher.FileEvent
-	var batchTimer *time.Timer
-
-	// Git state monitoring for staging changes
-	var lastStagedState *git.StagedState
-	var gitStateCheckTimer *time.Timer
-
-	// Initialize with the current staged state
-	initialStagedState, err := git.GetStagedState()
-	if err != nil {
-		fmt.Println(styles.CreateWarningStyle(fmt.Sprintf("Warning: Could not get initial staged state: %v", err)))
-	} else {
-		lastStagedState = initialStagedState
-	}
-
-	// Start with a stopped timer
-	batchTimer = time.NewTimer(0)
-	if !batchTimer.Stop() {
-		<-batchTimer.C
-	}
-
-	// Start git state checking timer (check every 500ms for responsive detection)
-	gitStateCheckInterval := 500 * time.Millisecond
-	gitStateCheckTimer = time.NewTimer(gitStateCheckInterval)
+	var lastStagedHash string
+	gitTicker := time.NewTicker(1 * time.Second)
+	defer gitTicker.Stop()
 
 	for {
 		select {
-		case event := <-fileWatcher.Events():
-			// Add to pending batch
-			pendingEvents = append(pendingEvents, event)
+		// -- Disabled file watching for now
+		// case batch := <-batchChan:
+		// fmt.Println(styles.CreateBatchHeader(len(batch)))
+		// fmt.Println(batch)
+		// processBatch(batch, cfg, llmClient, logTailer)
 
-			// Stop existing timer if any
-			if batchTimer != nil {
-				batchTimer.Stop()
+		case <-gitTicker.C:
+			state, err := git.GetStagedState()
+			if err == nil && state.Hash != lastStagedHash {
+				lastStagedHash = state.Hash
+				// fmt.Println(styles.CreateBatchHeader(len(batch)))
+				fmt.Println(styles.CreateGlossMessage("Git staged state changed. Reviewing..."))
+				processStagedChange(state, cfg, llmClient, logTailer)
 			}
-
-			// Start new timer
-			batchTimer = time.NewTimer(cfg.GetDebounceDuration())
-
-		case <-batchTimer.C:
-			// Process batch if we have events
-			if len(pendingEvents) > 0 {
-				fmt.Println(styles.CreateBatchHeader(len(pendingEvents)))
-				processBatch(pendingEvents, cfg, llmClient, logTailer)
-				pendingEvents = nil
-			}
-			// Reset timer for next batch
-			batchTimer = time.NewTimer(0)
-			if !batchTimer.Stop() {
-				<-batchTimer.C
-			}
-
-		case <-gitStateCheckTimer.C:
-			// Check for staged state changes
-			currentStagedState, err := git.GetStagedState()
-			if err != nil {
-				fmt.Println(styles.CreateWarningStyle(fmt.Sprintf("Warning: Could not check staged state: %v", err)))
-			} else if lastStagedState == nil || currentStagedState.Hash != lastStagedState.Hash {
-				// Staged state has changed, trigger analysis
-				fmt.Println(styles.CreateWarningStyle("🔄 Git staged state changed - triggering analysis"))
-				processStagedChange(currentStagedState, cfg, llmClient, logTailer)
-				lastStagedState = currentStagedState
-			}
-			// Reset timer for next check
-			gitStateCheckTimer = time.NewTimer(gitStateCheckInterval)
 
 		case <-sigChan:
 			fmt.Println(styles.CreateWarningStyle("\nShutting down Glimpse..."))
+			close(done)
 			return
 		}
 	}
 }
 
-// isIgnoredFile checks if a file should be ignored based on config
+/* ----------------------- Helpers ----------------------- */
+
 func isIgnoredFile(file string, cfg *config.Config) bool {
+	// Always ignore .git directory changes to prevent infinite loops
+	// caused by your own git polling.
+	if strings.Contains(file, "/.git/") || strings.HasPrefix(file, ".git/") {
+		return true
+	}
+
+	// 2. Ignore the application's own log file if it's inside the repo
+	if strings.Contains(file, cfg.Logs.File) {
+		return true
+	}
+
+	// 3. Check user config
 	for _, pattern := range cfg.Ignore {
 		if strings.Contains(file, pattern) {
 			return true
@@ -162,215 +148,168 @@ func isIgnoredFile(file string, cfg *config.Config) bool {
 	return false
 }
 
-// processBatch handles multiple file change events in one LLM call
-func processBatch(events []watcher.FileEvent, cfg *config.Config, llmClient *llm.Client, logTailer *logs.Tailer) {
-	if len(events) == 0 {
-		return
-	}
+/* ----------------------- Batching ---------------------- */
 
-	// Get all changed files from git (both staged and unstaged)
-	changedFiles, err := git.GetChangedFiles()
-	if err != nil {
-		fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("Error getting changed files from git: %v", err)))
-		return
-	}
+func startBatcher(
+	events <-chan watcher.FileEvent,
+	out chan<- []watcher.FileEvent,
+	debounce time.Duration,
+	done <-chan struct{},
+) {
+	go func() {
+		var batch []watcher.FileEvent
+		timer := time.NewTimer(idleTimerDuration)
 
-	// Filter out ignored files
-	var filteredFiles []string
-	for _, file := range changedFiles {
-		if !isIgnoredFile(file, cfg) {
-			filteredFiles = append(filteredFiles, file)
+		stopAndDrain := func(t *time.Timer) {
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
+		}
+
+		for {
+			select {
+			case <-done:
+				stopAndDrain(timer)
+				if len(batch) > 0 {
+					out <- batch
+				}
+				return
+
+			case ev := <-events:
+				batch = append(batch, ev)
+
+				if len(batch) >= maxBatchSize {
+					out <- batch
+					batch = nil
+					stopAndDrain(timer)
+					timer.Reset(idleTimerDuration)
+					continue
+				}
+
+				stopAndDrain(timer)
+				timer.Reset(debounce)
+
+			case <-timer.C:
+				if len(batch) > 0 {
+					out <- batch
+					batch = nil
+				}
+				timer.Reset(idleTimerDuration)
+			}
+		}
+	}()
+}
+
+/* -------------------- Batch Processing -------------------- */
+
+func processBatch(
+	events []watcher.FileEvent,
+	cfg *config.Config,
+	llmClient *llm.Client,
+	logTailer *logs.Tailer,
+) {
+	fileSet := make(map[string]struct{})
+	for _, ev := range events {
+		if !isIgnoredFile(ev.Path, cfg) {
+			fileSet[ev.Path] = struct{}{}
 		}
 	}
 
-	if len(filteredFiles) == 0 {
-		fmt.Println(styles.CreateWarningStyle("No reviewable changes detected (all files ignored)"))
+	if len(fileSet) == 0 {
 		return
 	}
 
-	// Get diffs for all filtered files
-	allDiffs, err := git.GetDiff(filteredFiles...)
-	if err != nil {
-		fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("Error getting git diffs: %v", err)))
+	var files []string
+	for f := range fileSet {
+		files = append(files, f)
+	}
+
+	diffs, err := git.GetDiff(files...)
+	if err != nil || len(diffs) == 0 {
 		return
 	}
 
-	if len(allDiffs) == 0 {
-		fmt.Println(styles.CreateWarningStyle("No actual changes detected in filtered files"))
-		return
+	logsText, _ := logTailer.Tail()
+
+	var ctx strings.Builder
+	ctx.WriteString("=== FILE CHANGE REVIEW ===\n")
+	for _, d := range diffs {
+		ctx.WriteString(fmt.Sprintf("File: %s\n%s\n\n", d.FilePath, d.Content))
 	}
-
-	// Get recent logs
-	var recentLogs string
-	logContent, err := logTailer.Tail()
-	if err != nil {
-		fmt.Println(styles.CreateWarningStyle(fmt.Sprintf("Warning: Could not read log file: %v", err)))
-		recentLogs = "No logs available"
-	} else {
-		recentLogs = logContent
-	}
-
-	// Build context with all diffs
-	var context strings.Builder
-	context.WriteString(fmt.Sprintf("=== BATCH ANALYSIS: %d files changed ===\n", len(filteredFiles)))
-	for i, filePath := range filteredFiles {
-		context.WriteString(fmt.Sprintf("%d. %s\n", i+1, filePath))
-	}
-	context.WriteString("\n")
-
-	context.WriteString("=== ALL GIT DIFFS ===\n")
-	for _, diff := range allDiffs {
-		context.WriteString(fmt.Sprintf("File: %s\n", diff.FilePath))
-		context.WriteString("Git Diff:\n")
-		context.WriteString(diff.Content)
-		context.WriteString("\n\n")
-	}
-
-	// // Always display the git diff being sent to LLM for audit/debug
-	// fmt.Println(styles.DiffHeader.Render("=== Git diff being sent to LLM ==="))
-	// fmt.Println(styles.CreateFileList(changedFiles))
-	// for _, diff := range allDiffs {
-	// 	fmt.Println(styles.CreateDiffHeader(diff.FilePath))
-	// 	fmt.Println(diff.Content)
-	// }
-	// fmt.Println(styles.DiffHeader.Render("=== END GIT DIFF ==="))
-
-	// Show progress indicator
-	progress := ui.NewProgress(100, 100, "Analyzing changes with AI")
-	progress.Update(50) // Start at 50%
-	fmt.Println(progress.View())
-
-	context.WriteString(fmt.Sprintf("Recent Runtime Logs (tail -n %d):\n", cfg.Logs.Lines))
-	context.WriteString(recentLogs)
-
-	// Send to LLM with all changes
-	task := fmt.Sprintf("Review the batch of %d file changes. If the logs show errors related to this logic, highlight them immediately. Be concise.", len(changedFiles))
+	ctx.WriteString("=== RUNTIME LOGS ===\n")
+	ctx.WriteString(logsText)
 
 	req := llm.GenerateRequest{
 		SystemPrompt: cfg.LLM.SystemPrompt,
-		Context:      context.String(),
-		Task:         task,
+		Context:      ctx.String(),
+		Task:         "Review these changes and flag bugs or risks. Be concise.",
 	}
 
 	fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
-
-	// Update progress to 100%
-	progress.Update(100)
-	fmt.Println(progress.View())
-
-	respChan := llmClient.Generate(req)
-	resp := <-respChan
-	if resp.Error != nil {
-		fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("LLM error: %v", resp.Error)))
-	} else {
-		fmt.Println(ui.SuccessBox("AI Analysis Complete", "Review has been successfully generated"))
-		fmt.Println(resp.Content)
-	}
+	launchLLMAsync(llmClient, req, "AI Analysis Complete")
 }
 
-// processStagedChange handles git staged state changes by analyzing staged diffs
-func processStagedChange(stagedState *git.StagedState, cfg *config.Config, llmClient *llm.Client, logTailer *logs.Tailer) {
-	if len(stagedState.StagedFiles) == 0 {
-		fmt.Println(styles.CreateWarningStyle("No staged files to analyze"))
+/* -------------------- Staged Processing -------------------- */
+
+func processStagedChange(
+	state *git.StagedState,
+	cfg *config.Config,
+	llmClient *llm.Client,
+	logTailer *logs.Tailer,
+) {
+	if len(state.StagedFiles) == 0 {
 		return
 	}
 
-	// Filter out ignored files
-	var filteredFiles []string
-	for _, file := range stagedState.StagedFiles {
-		if !isIgnoredFile(file, cfg) {
-			filteredFiles = append(filteredFiles, file)
+	var files []string
+	for _, f := range state.StagedFiles {
+		if !isIgnoredFile(f, cfg) {
+			files = append(files, f)
 		}
 	}
 
-	if len(filteredFiles) == 0 {
-		fmt.Println(styles.CreateWarningStyle("No reviewable staged changes (all files ignored)"))
+	diffs, err := git.GetStagedDiff(files...)
+	if err != nil || len(diffs) == 0 {
 		return
 	}
 
-	// Get staged diffs for all filtered files
-	stagedDiffs, err := git.GetStagedDiff(filteredFiles...)
-	if err != nil {
-		fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("Error getting staged git diffs: %v", err)))
-		return
+	logsText, _ := logTailer.Tail()
+
+	var ctx strings.Builder
+	ctx.WriteString("=== STAGED CHANGE REVIEW ===\n")
+	for _, d := range diffs {
+		ctx.WriteString(fmt.Sprintf("File: %s\n%s\n\n", d.FilePath, d.Content))
 	}
-
-	if len(stagedDiffs) == 0 {
-		fmt.Println(styles.CreateWarningStyle("No actual staged changes detected in filtered files"))
-		return
-	}
-
-	// Get recent logs
-	var recentLogs string
-	logContent, err := logTailer.Tail()
-	if err != nil {
-		fmt.Println(styles.CreateWarningStyle(fmt.Sprintf("Warning: Could not read log file: %v", err)))
-		recentLogs = "No logs available"
-	} else {
-		recentLogs = logContent
-	}
-
-	// Build context with staged diffs
-	var context strings.Builder
-	context.WriteString(fmt.Sprintf("=== STAGED CHANGES ANALYSIS: %d files staged ===\n", len(filteredFiles)))
-	for i, filePath := range filteredFiles {
-		context.WriteString(fmt.Sprintf("%d. %s\n", i+1, filePath))
-	}
-	context.WriteString("\n")
-
-	context.WriteString("=== STAGED GIT DIFFS ===\n")
-	for _, diff := range stagedDiffs {
-		context.WriteString(fmt.Sprintf("File: %s\n", diff.FilePath))
-		context.WriteString("Staged Git Diff:\n")
-		context.WriteString(diff.Content)
-		context.WriteString("\n\n")
-	}
-
-	// Always display the staged git diff being sent to LLM for audit/debug
-	fmt.Println(styles.DiffHeader.Render("=== Staged git diff being sent to LLM ==="))
-	fmt.Println(styles.CreateFileList(stagedState.StagedFiles))
-	for _, diff := range stagedDiffs {
-		fmt.Println(styles.CreateDiffHeader(diff.FilePath))
-		fmt.Println(diff.Content)
-	}
-	fmt.Println(styles.DiffHeader.Render("=== END STAGED GIT DIFF ==="))
-
-	// Show progress indicator
-	progress := ui.NewProgress(100, 100, "Analyzing staged changes with AI")
-	progress.Update(50) // Start at 50%
-	fmt.Println(progress.View())
-
-	context.WriteString(fmt.Sprintf("Recent Runtime Logs (tail -n %d):\n", cfg.Logs.Lines))
-	context.WriteString(recentLogs)
-
-	// Send to LLM with staged changes
-	task := fmt.Sprintf("Review the batch of %d staged file changes. Focus on the staged changes specifically. If the logs show errors related to this logic, highlight them immediately. Be concise.", len(filteredFiles))
+	ctx.WriteString("=== RUNTIME LOGS ===\n")
+	ctx.WriteString(logsText)
 
 	req := llm.GenerateRequest{
 		SystemPrompt: cfg.LLM.SystemPrompt,
-		Context:      context.String(),
-		Task:         task,
+		Context:      ctx.String(),
+		Task:         "Review staged changes only. Flag bugs or risks. Be concise.",
 	}
 
 	fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
-
-	// Update progress to 100%
-	progress.Update(100)
-	fmt.Println(progress.View())
-
-	respChan := llmClient.Generate(req)
-	resp := <-respChan
-	if resp.Error != nil {
-		fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("LLM error: %v", resp.Error)))
-	} else {
-		fmt.Println(ui.SuccessBox("AI Staged Changes Analysis Complete", "Staged changes review has been successfully generated"))
-		fmt.Println(resp.Content)
-	}
+	launchLLMAsync(llmClient, req, "AI Staged Review Complete")
 }
 
-// Batch test change
-// Another test change
-// Debug test change
-// Fixed timer test
-// Debug main loop test
-// Simplified timer test
+/* ---------------------- LLM Runner ---------------------- */
+
+func launchLLMAsync(
+	client *llm.Client,
+	req llm.GenerateRequest,
+	title string,
+) {
+	go func() {
+		resp := <-client.Generate(req)
+		if resp.Error != nil {
+			fmt.Println(styles.CreateErrorStyle(resp.Error.Error()))
+			return
+		}
+		fmt.Println(ui.SuccessBox(title, "Review generated successfully"))
+		fmt.Println(resp.Content)
+	}()
+}

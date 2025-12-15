@@ -18,7 +18,7 @@ This installs `glimpse` to your `GOPATH/bin` (usually `~/go/bin/`). Make sure `~
 
 Grab pre-built binaries from the [Releases page](https://github.com/revrost/glimpse/releases):
 - Linux: `glimpse-linux-amd64`
-- macOS: `glimpse-darwin-amd64` (Intel) or `glimpse-darwin-arm64` (Apple Silicon)  
+- macOS: `glimpse-darwin-amd64` (Intel) or `glimpse-darwin-arm64` (Apple Silicon)
 - Windows: `glimpse-windows-amd64.exe`
 
 ```bash
@@ -38,7 +38,7 @@ make build  # or: go build -o glimpse .
 ## Features
 
 - 🔄 **Real-time file watching** with intelligent debouncing
-- 📝 **Git diff capture** for staged and unstaged changes  
+- 📝 **Git diff capture** for staged and unstaged changes
 - 📋 **Log tailing** integration with structured slog output
 - 🤖 **Multi-provider LLM support** (OpenAI, Z.AI, Gemini, Ollama)
 - ⚙️ **Minimal YAML configuration** with sensible defaults
@@ -85,6 +85,15 @@ make build  # or: go build -o glimpse .
    ./glimpse
    ```
 
+
+## Architecture
+```
+fsnotify → bounded batcher → event‑scoped diffs → async LLM
+                ↓
+         safe timers + shutdown
+```
+
+
 ## Managing Your Installation
 
 ### Update to Latest Version
@@ -103,19 +112,19 @@ rm $(which glimpse)
 ```
 
 5. **Make Code Changes**
-   
+
    Glimpse will automatically detect changes and provide reviews:
 
    ```
    --- Reviewing: internal/handlers/payment.go ---
    Analyzing with openai (gpt-4o)...
-   
+
    🔍 **Code Review**:
-   
+
    **Bug Risk**: Line 45 - Potential nil pointer dereference if payment.Customer is nil
    **Performance**: Consider using sync.Pool for频繁创建的 structs
    **Security**: Validate payment.Amount before processing to avoid overflow
-   
+
    **Logs Context**: Recent errors show payment validation failures at 2023-12-07T14:23:11Z
    ```
 
@@ -128,7 +137,7 @@ Glimpse uses a `.glimpse.yaml` file in the repository root. If not found, it use
 ```yaml
 watch:
   - "./internal/**/*.go"    # Watch Go files in internal directory
-  - "./pkg/**/*.go"         # Watch Go files in pkg directory  
+  - "./pkg/**/*.go"         # Watch Go files in pkg directory
   - "./src/**/*.rs"         # Watch Rust files
 ignore:
   - "*_test.go"             # Ignore test files

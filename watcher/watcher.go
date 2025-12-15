@@ -13,8 +13,8 @@ import (
 
 // Config holds the watcher configuration
 type Config struct {
-	Watch   []string
-	Ignore  []string
+	Watch    []string
+	Ignore   []string
 	Debounce time.Duration
 }
 
@@ -48,7 +48,7 @@ func New(config Config) (*Watcher, error) {
 	fmt.Println(styles.Info.Render(fmt.Sprintf("Processing %d watch patterns", len(config.Watch))))
 	for _, pattern := range config.Watch {
 		fmt.Println(styles.Muted.Render(fmt.Sprintf("Pattern: %s", pattern)))
-		
+
 		// Check if pattern contains ** (recursive)
 		if strings.Contains(pattern, "**") {
 			// Handle recursive pattern
@@ -57,7 +57,7 @@ func New(config Config) (*Watcher, error) {
 			if baseDir == "" {
 				baseDir = "."
 			}
-			
+
 			fmt.Println(styles.Text.Render(fmt.Sprintf("Adding directory for recursive pattern: %s", baseDir)))
 			if err := w.watcher.Add(baseDir); err != nil {
 				fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to watch directory %s: %v", baseDir, err)))
@@ -72,7 +72,7 @@ func New(config Config) (*Watcher, error) {
 				continue
 			}
 			fmt.Println(styles.Muted.Render(fmt.Sprintf("Glob matches for %s: %v", pattern, matches)))
-			
+
 			for _, match := range matches {
 				// Get the directory to watch
 				dir := match
@@ -80,7 +80,7 @@ func New(config Config) (*Watcher, error) {
 				if err == nil && !info.IsDir() {
 					dir = filepath.Dir(match)
 				}
-				
+
 				// Add directory if not already added
 				if !addedDirs[dir] {
 					if err := w.watcher.Add(dir); err != nil {
@@ -113,7 +113,11 @@ func (w *Watcher) Start() {
 				if !ok {
 					return
 				}
-				
+				fmt.Println(event)
+				// if !event.Has(fsnotify.Write) {
+				// 	return
+				// }
+
 				// Skip if event should be ignored
 				if w.shouldIgnore(event.Name) {
 					continue
@@ -160,7 +164,7 @@ func (w *Watcher) normalizePath(path string) string {
 		basename = strings.TrimSuffix(basename, "#")
 		return filepath.Join(filepath.Dir(path), basename)
 	}
-	
+
 	return path
 }
 
