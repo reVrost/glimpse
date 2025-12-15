@@ -113,7 +113,7 @@ func main() {
 			if err == nil && state.Hash != lastStagedHash {
 				lastStagedHash = state.Hash
 				// fmt.Println(styles.CreateBatchHeader(len(batch)))
-				fmt.Println(styles.CreateGlossMessage("Git staged state changed. Reviewing..."))
+				fmt.Println(styles.CreateGlossMessage("Git staged state changed."))
 				processStagedChange(state, cfg, llmClient, logTailer)
 			}
 
@@ -248,7 +248,7 @@ func processBatch(
 		Task:         "Review these changes and flag bugs or risks. Be concise.",
 	}
 
-	fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
+	// fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
 	launchLLMAsync(llmClient, req, "AI Analysis Complete")
 }
 
@@ -292,7 +292,7 @@ func processStagedChange(
 		Task:         "Review staged changes only. Flag bugs or risks. Be concise.",
 	}
 
-	fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
+	// fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
 	launchLLMAsync(llmClient, req, "AI Staged Review Complete")
 }
 

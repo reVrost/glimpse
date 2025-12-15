@@ -15,7 +15,8 @@ var (
 	AccentColor    = lipgloss.Color("86")  // Aqua
 
 	// Semantic colors
-	SuccessColor = lipgloss.Color("46")  // Green
+	// SuccessColor = lipgloss.Color("46")  // Green
+	SuccessColor = lipgloss.Color("205") // Pink
 	WarningColor = lipgloss.Color("208") // Orange
 	ErrorColor   = lipgloss.Color("196") // Red
 	InfoColor    = lipgloss.Color("39")  // Blue

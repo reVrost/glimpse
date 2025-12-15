@@ -45,19 +45,19 @@ func (p *ProgressModel) Update(current int) {
 func (p *ProgressModel) View() string {
 	filled := int(p.percent * float64(p.width))
 	remaining := p.width - filled
-	
+
 	// Build progress bar
 	var bar strings.Builder
 	bar.WriteString(styles.Success.Render(strings.Repeat("█", filled)))
-	
+
 	if remaining > 0 {
 		bar.WriteString(styles.Muted.Render(strings.Repeat("░", remaining)))
 	}
-	
+
 	// Build full progress view
-	progressText := fmt.Sprintf("%s [%d/%d] %.1f%%", 
+	progressText := fmt.Sprintf("%s [%d/%d] %.1f%%",
 		p.text, p.current, p.total, p.percent*100)
-	
+
 	return styles.Text.Render(progressText) + " " + bar.String()
 }
 
@@ -91,10 +91,10 @@ func (a *AnimatedProgress) Tick() string {
 	if !a.active {
 		return ""
 	}
-	
+
 	frame := a.frames[a.index%len(a.frames)]
 	a.index++
-	
+
 	return styles.Spinner.Render(frame + " " + a.text)
 }
 
@@ -113,7 +113,7 @@ func NewFileTable() *FileTable {
 			if row == table.HeaderRow {
 				return styles.Subtitle.Padding(0, 1)
 			}
-			
+
 			switch col {
 			case 0: // File column
 				return styles.FilePath.Padding(0, 1)
@@ -125,7 +125,7 @@ func NewFileTable() *FileTable {
 				return styles.Text.Padding(0, 1)
 			}
 		})
-	
+
 	return &FileTable{table: t}
 }
 
@@ -157,7 +157,7 @@ func NewStatusBar(left, right string) *StatusBar {
 func (s *StatusBar) View() string {
 	// Get terminal width (using a reasonable default if unknown)
 	width := 80
-	
+
 	// Calculate padding needed
 	leftLen := lipgloss.Width(s.left)
 	rightLen := lipgloss.Width(s.right)
@@ -165,12 +165,12 @@ func (s *StatusBar) View() string {
 	if padding < 0 {
 		padding = 0
 	}
-	
+
 	leftStyle := styles.Status.Background(styles.HighlightBg)
 	rightStyle := styles.Status.Background(styles.HighlightBg)
-	
-	return leftStyle.Render(s.left) + 
-		strings.Repeat(" ", padding) + 
+
+	return leftStyle.Render(s.left) +
+		strings.Repeat(" ", padding) +
 		rightStyle.Render(s.right)
 }
 
@@ -178,7 +178,7 @@ func (s *StatusBar) View() string {
 func BorderedBox(title, content string) string {
 	titleStyle := styles.Title.Padding(0, 2)
 	contentStyle := styles.Text.Padding(1, 2)
-	
+
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(styles.PrimaryColor).
@@ -188,11 +188,11 @@ func BorderedBox(title, content string) string {
 		BorderRight(true).
 		Padding(0).
 		Width(80)
-	
+
 	// Create title and content
 	result := titleStyle.Render(title) + "\n"
 	result += contentStyle.Render(content)
-	
+
 	return box.Render(result)
 }
 
@@ -201,7 +201,7 @@ func InfoBox(title, message string) string {
 	boxStyle := styles.InfoContainer.
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(styles.InfoColor)
-	
+
 	content := styles.Bold.Render(title) + "\n" + styles.Text.Render(message)
 	return boxStyle.Render(content)
 }
@@ -211,7 +211,7 @@ func WarningBox(title, message string) string {
 	boxStyle := styles.WarningContainer.
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(styles.WarningColor)
-	
+
 	content := styles.Bold.Render(title) + "\n" + styles.Text.Render(message)
 	return boxStyle.Render(content)
 }
@@ -221,7 +221,7 @@ func ErrorBox(title, message string) string {
 	boxStyle := styles.ErrorContainer.
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(styles.ErrorColor)
-	
+
 	content := styles.Bold.Render(title) + "\n" + styles.Text.Render(message)
 	return boxStyle.Render(content)
 }
@@ -230,8 +230,8 @@ func ErrorBox(title, message string) string {
 func SuccessBox(title, message string) string {
 	boxStyle := styles.SuccessContainer.
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(styles.SuccessColor)
-	
+		BorderForeground(styles.PrimaryColor)
+
 	content := styles.Bold.Render(title) + "\n" + styles.Text.Render(message)
 	return boxStyle.Render(content)
 }
@@ -263,18 +263,18 @@ func (kb *KeyBindings) View() string {
 			if row == table.HeaderRow {
 				return styles.Subtitle.Padding(0, 1)
 			}
-			
+
 			if col == 0 { // Key column
 				return styles.Code.Padding(0, 1)
 			}
-			
+
 			return styles.Text.Padding(0, 1)
 		})
-	
+
 	for key, desc := range kb.bindings {
 		t.Row(key, desc)
 	}
-	
+
 	return t.String()
 }
 

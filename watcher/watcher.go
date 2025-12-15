@@ -113,7 +113,7 @@ func (w *Watcher) Start() {
 				if !ok {
 					return
 				}
-				fmt.Println(event)
+				// fmt.Println(event)
 				// if !event.Has(fsnotify.Write) {
 				// 	return
 				// }
