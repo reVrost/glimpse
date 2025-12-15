@@ -119,31 +119,51 @@ func main() {
 	}
 }
 
+// isIgnoredFile checks if a file should be ignored based on config
+func isIgnoredFile(file string, cfg *config.Config) bool {
+	for _, pattern := range cfg.Ignore {
+		if strings.Contains(file, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // processBatch handles multiple file change events in one LLM call
 func processBatch(events []watcher.FileEvent, cfg *config.Config, llmClient *llm.Client, logTailer *logs.Tailer) {
 	if len(events) == 0 {
 		return
 	}
 	
-	// Collect all diffs from all files
-	var allDiffs []git.Diff
-	var changedFiles []string
+	// Get all changed files from git (both staged and unstaged)
+	changedFiles, err := git.GetChangedFiles()
+	if err != nil {
+		fmt.Printf("Error getting changed files from git: %v\n", err)
+		return
+	}
 	
-	for _, event := range events {
-		diffs, err := git.GetDiff(event.Path)
-		if err != nil {
-			fmt.Printf("Error getting git diff for %s: %v\n", event.Path, err)
-			continue
-		}
-		
-		if len(diffs) > 0 {
-			allDiffs = append(allDiffs, diffs...)
-			changedFiles = append(changedFiles, event.Path)
+	// Filter out ignored files
+	var filteredFiles []string
+	for _, file := range changedFiles {
+		if !isIgnoredFile(file, cfg) {
+			filteredFiles = append(filteredFiles, file)
 		}
 	}
 	
+	if len(filteredFiles) == 0 {
+		fmt.Println("No reviewable changes detected (all files ignored)")
+		return
+	}
+	
+	// Get diffs for all filtered files
+	allDiffs, err := git.GetDiff(filteredFiles...)
+	if err != nil {
+		fmt.Printf("Error getting git diffs: %v\n", err)
+		return
+	}
+	
 	if len(allDiffs) == 0 {
-		fmt.Println("No changes detected in batch")
+		fmt.Println("No actual changes detected in filtered files")
 		return
 	}
 	
@@ -159,8 +179,8 @@ func processBatch(events []watcher.FileEvent, cfg *config.Config, llmClient *llm
 	
 	// Build context with all diffs
 	var context strings.Builder
-	context.WriteString(fmt.Sprintf("=== BATCH ANALYSIS: %d files changed ===\n", len(changedFiles)))
-	for i, filePath := range changedFiles {
+	context.WriteString(fmt.Sprintf("=== BATCH ANALYSIS: %d files changed ===\n", len(filteredFiles)))
+	for i, filePath := range filteredFiles {
 		context.WriteString(fmt.Sprintf("%d. %s\n", i+1, filePath))
 	}
 	context.WriteString("\n")
