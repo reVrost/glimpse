@@ -30,6 +30,8 @@ This installs `glimpse` to your `GOPATH/bin` (usually `~/go/bin/`). Make sure `~
    export GEMINI_API_KEY="your-gemini-key-here"
    # or for Z.AI
    export ZAI_API_KEY="your-zai-key-here"
+   # or for CLAUDE
+   export CLAUDE_API_KEY="your-claude-key-here"
    ```
 
 2. **Create Configuration** (`.glimpse.yaml` in repo root)
