@@ -45,9 +45,9 @@ func New(config Config) (*Watcher, error) {
 
 	// Add watch patterns - watch directories, not files
 	addedDirs := make(map[string]bool)
-	fmt.Println(styles.Info.Render(fmt.Sprintf("Processing %d watch patterns", len(config.Watch))))
+	// fmt.Println(styles.Info.Render(fmt.Sprintf("Processing %d watch patterns", len(config.Watch))))
 	for _, pattern := range config.Watch {
-		fmt.Println(styles.Muted.Render(fmt.Sprintf("Pattern: %s", pattern)))
+		// fmt.Println(styles.Muted.Render(fmt.Sprintf("Pattern: %s", pattern)))
 
 		// Check if pattern contains ** (recursive)
 		if strings.Contains(pattern, "**") {
@@ -58,7 +58,7 @@ func New(config Config) (*Watcher, error) {
 				baseDir = "."
 			}
 
-			fmt.Println(styles.Text.Render(fmt.Sprintf("Adding directory for recursive pattern: %s", baseDir)))
+			// fmt.Println(styles.Text.Render(fmt.Sprintf("Adding directory for recursive pattern: %s", baseDir)))
 			if err := w.watcher.Add(baseDir); err != nil {
 				fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to watch directory %s: %v", baseDir, err)))
 				continue
@@ -71,7 +71,7 @@ func New(config Config) (*Watcher, error) {
 				fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Glob error for pattern %s: %v", pattern, err)))
 				continue
 			}
-			fmt.Println(styles.Muted.Render(fmt.Sprintf("Glob matches for %s: %v", pattern, matches)))
+			// fmt.Println(styles.Muted.Render(fmt.Sprintf("Glob matches for %s: %v", pattern, matches)))
 
 			for _, match := range matches {
 				// Get the directory to watch
@@ -87,10 +87,10 @@ func New(config Config) (*Watcher, error) {
 						fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to watch directory %s: %v", dir, err)))
 						continue
 					}
-					fmt.Println(styles.Info.Render(fmt.Sprintf("Watching directory: %s", dir)))
+					// fmt.Println(styles.Info.Render(fmt.Sprintf("Watching directory: %s", dir)))
 					addedDirs[dir] = true
 				} else {
-					fmt.Println(styles.Muted.Render(fmt.Sprintf("Directory %s already being watched", dir)))
+					// fmt.Println(styles.Muted.Render(fmt.Sprintf("Directory %s already being watched", dir)))
 				}
 			}
 		}

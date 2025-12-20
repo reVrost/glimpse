@@ -31,6 +31,9 @@ const (
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version information")
+	var provider string
+	flag.StringVar(&provider, "provider", "", "LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
+	flag.StringVar(&provider, "p", "", "Alias for --provider: LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
 	flag.Parse()
 
 	if *showVersion {
@@ -49,6 +52,32 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
 		os.Exit(1)
+	}
+
+	// If no provider is configured and not specified via CLI, prompt the user
+	if cfg.LLM.Provider == "" && provider == "" {
+		fmt.Println(styles.CreateWarningStyle("No LLM provider configured."))
+		if err := config.PromptAndSaveProvider(); err != nil {
+			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
+			os.Exit(1)
+		}
+		// Reload config after prompting
+		cfg, err = config.Load()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
+			os.Exit(1)
+		}
+	}
+
+	// Override provider and model if specified via CLI
+	if provider != "" {
+		parts := strings.SplitN(provider, ":", 2)
+		if len(parts) != 2 {
+			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle("Invalid provider format. Expected 'provider:model'"))
+			os.Exit(1)
+		}
+		cfg.LLM.Provider = parts[0]
+		cfg.LLM.Model = parts[1]
 	}
 
 	llmClient := llm.New(llm.Config{
@@ -89,6 +118,11 @@ func main() {
 	fmt.Println(
 		styles.Status.Render(
 			fmt.Sprintf("Watching %d patterns: %v", len(cfg.Watch), cfg.Watch),
+		),
+	)
+	fmt.Println(
+		styles.Info.Render(
+			fmt.Sprintf("Using LLM: %s (%s)", strings.ToUpper(cfg.LLM.Provider), cfg.LLM.Model),
 		),
 	)
 	fmt.Println(styles.Muted.Render("Press Ctrl+C to exit"))
