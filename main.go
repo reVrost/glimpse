@@ -31,6 +31,7 @@ const (
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version information")
+	headless := flag.Bool("hh", false, "Headless mode: run once, review git changes, and exit")
 	var provider string
 	flag.StringVar(&provider, "provider", "", "LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
 	flag.StringVar(&provider, "p", "", "Alias for --provider: LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
@@ -42,6 +43,12 @@ func main() {
 				fmt.Sprintf("Glimpse v%s (commit: %s, built: %s)", version, commit, buildTime),
 			),
 		)
+		return
+	}
+
+	// Headless mode: run once and exit
+	if *headless {
+		runHeadlessMode(provider)
 		return
 	}
 
@@ -346,4 +353,72 @@ func launchLLMAsync(
 		fmt.Println(ui.SuccessBox(title, "Review generated successfully"))
 		fmt.Println(resp.Content)
 	}()
+}
+
+/* --------------------- Headless Mode --------------------- */
+
+func runHeadlessMode(provider string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
+		os.Exit(1)
+	}
+
+	// Override provider and model if specified via CLI
+	if provider != "" {
+		parts := strings.SplitN(provider, ":", 2)
+		if len(parts) != 2 {
+			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle("Invalid provider format. Expected 'provider:model'"))
+			os.Exit(1)
+		}
+		cfg.LLM.Provider = parts[0]
+		cfg.LLM.Model = parts[1]
+	}
+
+	// If no provider is configured and not specified via CLI, exit
+	if cfg.LLM.Provider == "" {
+		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle("No LLM provider configured. Use --provider flag or configure with glimpse -p"))
+		os.Exit(1)
+	}
+
+	llmClient := llm.New(llm.Config{
+		Provider:     cfg.LLM.Provider,
+		Model:        cfg.LLM.Model,
+		APIKey:       cfg.LLM.APIKey,
+		SystemPrompt: cfg.LLM.SystemPrompt,
+	})
+
+	// Get all changes (staged and unstaged)
+	diffs, err := git.GetDiff()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
+		os.Exit(1)
+	}
+
+	if len(diffs) == 0 {
+		fmt.Println(styles.CreateInfoStyle("No changes to review"))
+		return
+	}
+
+	// Build context for review
+	var ctx strings.Builder
+	ctx.WriteString("=== GIT CHANGE REVIEW ===\n")
+	for _, d := range diffs {
+		ctx.WriteString(fmt.Sprintf("File: %s\n%s\n\n", d.FilePath, d.Content))
+	}
+
+	req := llm.GenerateRequest{
+		SystemPrompt: cfg.LLM.SystemPrompt,
+		Context:      ctx.String(),
+		Task:         "Review these git changes. Flag bugs, security issues, or potential improvements. Be concise.",
+	}
+
+	// Run LLM synchronously and output directly
+	resp := <-llmClient.Generate(req)
+	if resp.Error != nil {
+		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(resp.Error.Error()))
+		os.Exit(1)
+	}
+
+	fmt.Println(resp.Content)
 }
