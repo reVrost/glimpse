@@ -32,6 +32,7 @@ const (
 func main() {
 	showVersion := flag.Bool("version", false, "Show version information")
 	headless := flag.Bool("hh", false, "Headless mode: run once, review git changes, and exit")
+	fixMode := flag.Bool("f", false, "Fix mode: automatically run crush to fix issues identified by review")
 	var provider string
 	flag.StringVar(&provider, "provider", "", "LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
 	flag.StringVar(&provider, "p", "", "Alias for --provider: LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
@@ -48,7 +49,7 @@ func main() {
 
 	// Headless mode: run once and exit
 	if *headless {
-		runHeadlessMode(provider)
+		runHeadlessMode(provider, *fixMode)
 		return
 	}
 
@@ -132,6 +133,13 @@ func main() {
 			fmt.Sprintf("Using LLM: %s (%s)", strings.ToUpper(cfg.LLM.Provider), cfg.LLM.Model),
 		),
 	)
+	if *fixMode {
+		fmt.Println(
+			styles.Status.Render(
+				"Fix mode: ON - Crush will auto-fix issues",
+			),
+		)
+	}
 	fmt.Println(styles.Muted.Render("Press Ctrl+C to exit"))
 
 	sigChan := make(chan os.Signal, 1)
@@ -154,8 +162,12 @@ func main() {
 			if err == nil && state.Hash != lastStagedHash {
 				lastStagedHash = state.Hash
 				// fmt.Println(styles.CreateBatchHeader(len(batch)))
-				fmt.Println(styles.CreateGlossMessage("Git staged state changed."))
-				processStagedChange(state, cfg, llmClient, logTailer)
+				isReviewing := processStagedChange(state, cfg, llmClient, logTailer, *fixMode)
+				if isReviewing {
+					fmt.Println(styles.Info.Render("Git state changed, reviewing..."))
+				} else {
+					fmt.Println(styles.Muted.Render("Git state changed, not reviewing (no changes)."))
+				}
 			}
 
 		case <-sigChan:
@@ -290,7 +302,7 @@ func processBatch(
 	}
 
 	// fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
-	launchLLMAsync(llmClient, req, "AI Analysis Complete")
+	launchLLMAsync(llmClient, req, "AI Analysis Complete", false)
 }
 
 /* -------------------- Staged Processing -------------------- */
@@ -300,9 +312,10 @@ func processStagedChange(
 	cfg *config.Config,
 	llmClient *llm.Client,
 	logTailer *logs.Tailer,
-) {
+	fixMode bool,
+) bool {
 	if len(state.StagedFiles) == 0 {
-		return
+		return false
 	}
 
 	var files []string
@@ -312,9 +325,13 @@ func processStagedChange(
 		}
 	}
 
+	if len(files) == 0 {
+		return false
+	}
+
 	diffs, err := git.GetStagedDiff(files...)
 	if err != nil || len(diffs) == 0 {
-		return
+		return false
 	}
 
 	logsText, _ := logTailer.Tail()
@@ -327,14 +344,21 @@ func processStagedChange(
 	ctx.WriteString("=== RUNTIME LOGS ===\n")
 	ctx.WriteString(logsText)
 
+	// Modify system prompt for fix mode
+	systemPrompt := cfg.LLM.SystemPrompt
+	if fixMode {
+		systemPrompt += "\n\nCRITICAL: Your review MUST start with a header line exactly like this:\nNEED FIX: YES   (if changes are required)\nor\nNEED FIX: NO    (if no changes required)\n\nThen provide your review. If NEED FIX: YES, end your review with a clear, actionable fix prompt that can be passed directly to crush."
+	}
+
 	req := llm.GenerateRequest{
-		SystemPrompt: cfg.LLM.SystemPrompt,
+		SystemPrompt: systemPrompt,
 		Context:      ctx.String(),
 		Task:         "Review staged changes only. Flag bugs or risks. Be concise.",
 	}
 
 	// fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
-	launchLLMAsync(llmClient, req, "AI Staged Review Complete")
+	launchLLMAsync(llmClient, req, "AI Staged Review Complete", fixMode)
+	return true
 }
 
 /* ---------------------- LLM Runner ---------------------- */
@@ -343,21 +367,66 @@ func launchLLMAsync(
 	client *llm.Client,
 	req llm.GenerateRequest,
 	title string,
+	fixMode bool,
 ) {
 	go func() {
+		// Show that LLM is processing
+		fmt.Println(styles.Info.Render("LLM analyzing staged changes..."))
+
 		resp := <-client.Generate(req)
 		if resp.Error != nil {
 			fmt.Println(styles.CreateErrorStyle(resp.Error.Error()))
 			return
 		}
-		fmt.Println(ui.SuccessBox(title, "Review generated successfully"))
-		fmt.Println(resp.Content)
+
+		// Handle fix mode
+		if fixMode {
+			needFix, fixPrompt, review, err := parseFixResponse(resp.Content)
+			if err != nil {
+				fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("Failed to parse fix response: %v", err)))
+				// Fall back to normal output
+				fmt.Println(ui.SuccessBox(title, "Review generated successfully"))
+				fmt.Println(resp.Content)
+				return
+			}
+
+			// Print success box with fix mode indicator
+			fmt.Println(ui.SuccessBox(title+" [Fix Mode]", "Review generated successfully"))
+
+			// Print NEED FIX header
+			if needFix {
+				fmt.Println(styles.Status.Render("NEED FIX: YES"))
+			} else {
+				fmt.Println(styles.Status.Render("NEED FIX: NO"))
+			}
+
+			// Print review
+			fmt.Println()
+			fmt.Println(review)
+
+			// Run crush if fix is needed
+			if needFix {
+				fmt.Println()
+				if err := runCrushFix(fixPrompt); err != nil {
+					// Already handled in runCrushFix with error messages
+				} else {
+					fmt.Println(styles.CreateInfoStyle("Fix execution complete."))
+				}
+			} else {
+				fmt.Println()
+				fmt.Println(styles.CreateInfoStyle("No fixes needed."))
+			}
+		} else {
+			// Normal mode: just output the review
+			fmt.Println(ui.SuccessBox(title, "Review generated successfully"))
+			fmt.Println(resp.Content)
+		}
 	}()
 }
 
 /* --------------------- Headless Mode --------------------- */
 
-func runHeadlessMode(provider string) {
+func runHeadlessMode(provider string, fixMode bool) {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
@@ -407,8 +476,14 @@ func runHeadlessMode(provider string) {
 		ctx.WriteString(fmt.Sprintf("File: %s\n%s\n\n", d.FilePath, d.Content))
 	}
 
+	// Modify system prompt for fix mode
+	systemPrompt := cfg.LLM.SystemPrompt
+	if fixMode {
+		systemPrompt += "\n\nCRITICAL: Your review MUST start with a header line exactly like this:\nNEED FIX: YES   (if changes are required)\nor\nNEED FIX: NO    (if no changes required)\n\nThen provide your review. If NEED FIX: YES, end your review with a clear, actionable fix prompt that can be passed directly to crush."
+	}
+
 	req := llm.GenerateRequest{
-		SystemPrompt: cfg.LLM.SystemPrompt,
+		SystemPrompt: systemPrompt,
 		Context:      ctx.String(),
 		Task:         "Review these git changes. Flag bugs, security issues, or potential improvements. Be concise.",
 	}
@@ -420,5 +495,41 @@ func runHeadlessMode(provider string) {
 		os.Exit(1)
 	}
 
-	fmt.Println(resp.Content)
+	// Handle fix mode
+	if fixMode {
+		needFix, fixPrompt, review, err := parseFixResponse(resp.Content)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to parse fix response: %v", err)))
+			// Fall back to normal output
+			fmt.Println(resp.Content)
+			return
+		}
+
+		// Print NEED FIX header
+		if needFix {
+			fmt.Println(styles.Status.Render("NEED FIX: YES"))
+		} else {
+			fmt.Println(styles.Status.Render("NEED FIX: NO"))
+		}
+
+		// Print review
+		fmt.Println()
+		fmt.Println(review)
+
+		// Run crush if fix is needed
+		if needFix {
+			fmt.Println()
+			if err := runCrushFix(fixPrompt); err != nil {
+				// Already handled in runCrushFix with error messages
+			} else {
+				fmt.Println(styles.CreateInfoStyle("Fix execution complete."))
+			}
+		} else {
+			fmt.Println()
+			fmt.Println(styles.CreateInfoStyle("No fixes needed. Review complete."))
+		}
+	} else {
+		// Normal mode: just output the review
+		fmt.Println(resp.Content)
+	}
 }
