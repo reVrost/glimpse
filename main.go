@@ -33,6 +33,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version information")
 	headless := flag.Bool("hh", false, "Headless mode: run once, review git changes, and exit")
 	fixMode := flag.Bool("f", false, "Fix mode: automatically run crush to fix issues identified by review")
+	streamMode := flag.Bool("s", false, "Stream mode: show LLM reasoning and response in real-time")
 	var provider string
 	flag.StringVar(&provider, "provider", "", "LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
 	flag.StringVar(&provider, "p", "", "Alias for --provider: LLM provider and model in format 'provider:model' (e.g., 'zai:glm-4.6')")
@@ -49,7 +50,7 @@ func main() {
 
 	// Headless mode: run once and exit
 	if *headless {
-		runHeadlessMode(provider, *fixMode)
+		runHeadlessMode(provider, *fixMode, *streamMode)
 		return
 	}
 
@@ -162,7 +163,7 @@ func main() {
 			if err == nil && state.Hash != lastStagedHash {
 				lastStagedHash = state.Hash
 				// fmt.Println(styles.CreateBatchHeader(len(batch)))
-				isReviewing := processStagedChange(state, cfg, llmClient, logTailer, *fixMode)
+				isReviewing := processStagedChange(state, cfg, llmClient, logTailer, *fixMode, *streamMode)
 				if isReviewing {
 					fmt.Println(styles.Info.Render("Git state changed, reviewing..."))
 				} else {
@@ -313,6 +314,7 @@ func processStagedChange(
 	llmClient *llm.Client,
 	logTailer *logs.Tailer,
 	fixMode bool,
+	streamMode bool,
 ) bool {
 	if len(state.StagedFiles) == 0 {
 		return false
@@ -354,6 +356,7 @@ func processStagedChange(
 		SystemPrompt: systemPrompt,
 		Context:      ctx.String(),
 		Task:         "Review staged changes only. Flag bugs or risks. Be concise.",
+		Stream:       streamMode,
 	}
 
 	// fmt.Println(styles.CreateProviderInfo(cfg.LLM.Provider, cfg.LLM.Model))
@@ -370,8 +373,10 @@ func launchLLMAsync(
 	fixMode bool,
 ) {
 	go func() {
-		// Show that LLM is processing
-		fmt.Println(styles.Info.Render("LLM analyzing staged changes..."))
+		// Show that LLM is processing (only for non-streaming mode)
+		if !req.Stream {
+			fmt.Println(styles.Info.Render("LLM analyzing staged changes..."))
+		}
 
 		resp := <-client.Generate(req)
 		if resp.Error != nil {
@@ -426,7 +431,7 @@ func launchLLMAsync(
 
 /* --------------------- Headless Mode --------------------- */
 
-func runHeadlessMode(provider string, fixMode bool) {
+func runHeadlessMode(provider string, fixMode bool, streamMode bool) {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(err.Error()))
@@ -486,6 +491,7 @@ func runHeadlessMode(provider string, fixMode bool) {
 		SystemPrompt: systemPrompt,
 		Context:      ctx.String(),
 		Task:         "Review these git changes. Flag bugs, security issues, or potential improvements. Be concise.",
+		Stream:       streamMode,
 	}
 
 	// Run LLM synchronously and output directly

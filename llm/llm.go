@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -156,7 +157,12 @@ func (c *Client) generateOpenAI(req GenerateRequest) (string, error) {
 	payload := openAIRequest{
 		Model:    c.config.Model,
 		Messages: messages,
-		Stream:   false,
+		Stream:   req.Stream,
+	}
+
+	// If streaming is enabled, handle separately
+	if req.Stream {
+		return c.generateOpenAIStreaming(req, payload)
 	}
 
 	body, err := json.Marshal(payload)
@@ -200,6 +206,109 @@ func (c *Client) generateOpenAI(req GenerateRequest) (string, error) {
 	return openAIResp.Choices[0].Message.Content, nil
 }
 
+// generateOpenAIStreaming handles OpenAI streaming API requests
+func (c *Client) generateOpenAIStreaming(req GenerateRequest, payload interface{}) (string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Make HTTP request
+	httpReq, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error: %s", string(respBody))
+	}
+
+	// Read SSE stream
+	scanner := bufio.NewScanner(resp.Body)
+	var fullContent strings.Builder
+	var fullReasoning strings.Builder
+	var hasReasoning bool
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip empty lines and SSE comments
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// Remove "data: " prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for end of stream
+		if data == "[DONE]" {
+			break
+		}
+
+		// Parse SSE chunk
+		type chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content         string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+
+		var ch chunk
+		if err := json.Unmarshal([]byte(data), &ch); err != nil {
+			continue // Skip invalid chunks
+		}
+
+		if len(ch.Choices) == 0 {
+			continue
+		}
+
+		delta := ch.Choices[0].Delta
+
+		// Handle reasoning content (for o1 models)
+		if delta.ReasoningContent != "" {
+			if !hasReasoning {
+				fmt.Println(styles.Muted.Render("Thought:"))
+				hasReasoning = true
+			}
+			fmt.Print(styles.Muted.Render(delta.ReasoningContent))
+			fullReasoning.WriteString(delta.ReasoningContent)
+		}
+
+		// Handle regular content
+		if delta.Content != "" {
+			if hasReasoning {
+				fmt.Println() // End reasoning section
+				fmt.Println(styles.Info.Render("Response:"))
+			}
+			fmt.Print(delta.Content)
+			fullContent.WriteString(delta.Content)
+		}
+	}
+
+	fmt.Println() // Newline after streaming
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading stream: %w", err)
+	}
+
+	return fullContent.String(), nil
+}
+
 // generateZAI handles Z.AI API requests
 func (c *Client) generateZAI(req GenerateRequest) (string, error) {
 	// Z.AI API request structure (compatible with OpenAI format)
@@ -240,7 +349,12 @@ func (c *Client) generateZAI(req GenerateRequest) (string, error) {
 		Model:       model,
 		Messages:    messages,
 		Temperature: 1.0,
-		Stream:      false,
+		Stream:      req.Stream,
+	}
+
+	// If streaming is enabled, handle separately
+	if req.Stream {
+		return c.generateZAIStreaming(req, payload, model)
 	}
 
 	body, err := json.Marshal(payload)
@@ -285,6 +399,91 @@ func (c *Client) generateZAI(req GenerateRequest) (string, error) {
 	return zaiResp.Choices[0].Message.Content, nil
 }
 
+// generateZAIStreaming handles Z.AI streaming API requests
+func (c *Client) generateZAIStreaming(req GenerateRequest, payload interface{}, model string) (string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Make HTTP request to Z.AI API
+	httpReq, err := http.NewRequest("POST", "https://api.z.ai/api/coding/paas/v4/chat/completions", bytes.NewBuffer(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept-Language", "en-US,en")
+	httpReq.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error: %s", string(respBody))
+	}
+
+	// Read SSE stream
+	scanner := bufio.NewScanner(resp.Body)
+	var fullContent strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip empty lines and SSE comments
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// Remove "data: " prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for end of stream
+		if data == "[DONE]" {
+			break
+		}
+
+		// Parse SSE chunk
+		type chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+
+		var ch chunk
+		if err := json.Unmarshal([]byte(data), &ch); err != nil {
+			continue // Skip invalid chunks
+		}
+
+		if len(ch.Choices) == 0 {
+			continue
+		}
+
+		content := ch.Choices[0].Delta.Content
+		if content != "" {
+			fmt.Print(content)
+			fullContent.WriteString(content)
+		}
+	}
+
+	fmt.Println() // Newline after streaming
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading stream: %w", err)
+	}
+
+	return fullContent.String(), nil
+}
+
 // generateClaude handles Anthropic Claude API requests
 func (c *Client) generateClaude(req GenerateRequest) (string, error) {
 	// Claude API request structure
@@ -298,6 +497,7 @@ func (c *Client) generateClaude(req GenerateRequest) (string, error) {
 		MaxTokens int           `json:"max_tokens"`
 		Messages  []claudeMessage `json:"messages"`
 		System    string        `json:"system,omitempty"`
+		Stream    bool          `json:"stream"`
 	}
 
 	type claudeResponse struct {
@@ -332,11 +532,17 @@ func (c *Client) generateClaude(req GenerateRequest) (string, error) {
 		Model:     model,
 		MaxTokens: 4096,
 		Messages:  messages,
+		Stream:    req.Stream,
 	}
 
 	// Add system prompt if provided
 	if req.SystemPrompt != "" {
 		payload.System = req.SystemPrompt
+	}
+
+	// If streaming is enabled, handle separately
+	if req.Stream {
+		return c.generateClaudeStreaming(req, payload)
 	}
 
 	body, err := json.Marshal(payload)
@@ -379,6 +585,103 @@ func (c *Client) generateClaude(req GenerateRequest) (string, error) {
 	}
 
 	return claudeResp.Content[0].Text, nil
+}
+
+// generateClaudeStreaming handles Claude streaming API requests
+func (c *Client) generateClaudeStreaming(req GenerateRequest, payload interface{}) (string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Make HTTP request to Claude API
+	httpReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", c.config.APIKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error: %s", string(respBody))
+	}
+
+	// Read SSE stream
+	scanner := bufio.NewScanner(resp.Body)
+	var fullContent strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip empty lines and SSE comments
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// Remove "data: " prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Parse SSE chunk
+		type claudeEvent struct {
+			Type    string `json:"type"`
+			Delta   *struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"delta"`
+			Message *struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+
+		var event claudeEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue // Skip invalid chunks
+		}
+
+		// Handle error events
+		if event.Error != nil {
+			return "", fmt.Errorf("API error: %s", event.Error.Message)
+		}
+
+		// Handle content_block_delta events (streaming tokens)
+		if event.Type == "content_block_delta" && event.Delta != nil && event.Delta.Type == "text_delta" {
+			if event.Delta.Text != "" {
+				fmt.Print(event.Delta.Text)
+				fullContent.WriteString(event.Delta.Text)
+			}
+		}
+
+		// Handle message_stop event (end of stream)
+		if event.Type == "message_stop" {
+			break
+		}
+	}
+
+	fmt.Println() // Newline after streaming
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading stream: %w", err)
+	}
+
+	return fullContent.String(), nil
 }
 
 // generateGemini handles Google Gemini API requests
