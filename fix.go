@@ -14,13 +14,12 @@ import (
 
 const (
 	crushTimeout = 5 * time.Minute
-	fixKeywords  = "fix|change|update|implement|add|remove|correct"
 )
 
-// parseFixResponse parses the LLM response to extract fix decision, prompt, and review
-func parseFixResponse(content string) (needFix bool, fixPrompt string, review string, err error) {
+// parseFixResponse parses the LLM response to extract fix decision and review
+func parseFixResponse(content string) (needFix bool, review string, err error) {
 	if strings.TrimSpace(content) == "" {
-		return false, "", "", fmt.Errorf("empty response")
+		return false, "", fmt.Errorf("empty response")
 	}
 
 	lines := strings.Split(content, "\n")
@@ -67,120 +66,7 @@ func parseFixResponse(content string) (needFix bool, fixPrompt string, review st
 	// Clean up review: remove leading/trailing whitespace
 	review = strings.TrimSpace(review)
 
-	if needFix {
-		fixPrompt = extractFixPrompt(content)
-	}
-
-	return needFix, fixPrompt, review, nil
-}
-
-// extractFixPrompt extracts the actionable fix prompt from the LLM response
-func extractFixPrompt(content string) string {
-	lines := strings.Split(content, "\n")
-
-	// Look for sections that contain fix instructions
-	var fixSections []string
-	var currentSection []string
-	inFixSection := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Detect fix-related keywords
-		if strings.Contains(strings.ToLower(trimmed), "fix:") ||
-			strings.Contains(strings.ToLower(trimmed), "fix prompt:") ||
-			strings.Contains(strings.ToLower(trimmed), "fix instruction:") ||
-			strings.Contains(strings.ToLower(trimmed), "action:") ||
-			strings.Contains(strings.ToLower(trimmed), "suggested fix:") {
-			inFixSection = true
-			if len(currentSection) > 0 {
-				fixSections = append(fixSections, strings.Join(currentSection, " "))
-				currentSection = nil
-			}
-
-			// Extract content after the label
-			labelPatterns := []string{"fix:", "fix prompt:", "fix instruction:", "action:", "suggested fix:"}
-			for _, pattern := range labelPatterns {
-				lowerTrimmed := strings.ToLower(trimmed)
-				if strings.Contains(lowerTrimmed, pattern) {
-					// Find the position after the pattern
-					patternIndex := strings.Index(lowerTrimmed, pattern)
-					contentStart := patternIndex + len(pattern)
-					if contentStart < len(trimmed) {
-						afterLabel := strings.TrimSpace(trimmed[contentStart:])
-						if afterLabel != "" {
-							currentSection = append(currentSection, afterLabel)
-						}
-					}
-					break
-				}
-			}
-			continue
-		}
-
-		// Collect lines in the fix section
-		if inFixSection {
-			if trimmed == "" {
-				// Empty line ends the fix section
-				if len(currentSection) > 0 {
-					fixSections = append(fixSections, strings.Join(currentSection, " "))
-					currentSection = nil
-				}
-				inFixSection = false
-			} else {
-				// Skip the label line (e.g., "Fix:")
-				if !strings.HasPrefix(strings.ToLower(trimmed), "fix") &&
-					!strings.HasPrefix(strings.ToLower(trimmed), "fix prompt") &&
-					!strings.HasPrefix(strings.ToLower(trimmed), "fix instruction") &&
-					!strings.HasPrefix(strings.ToLower(trimmed), "action") &&
-					!strings.HasPrefix(strings.ToLower(trimmed), "suggested fix") {
-					currentSection = append(currentSection, trimmed)
-				}
-			}
-		}
-	}
-
-	// Don't forget the last section
-	if len(currentSection) > 0 {
-		fixSections = append(fixSections, strings.Join(currentSection, " "))
-	}
-
-	// If no explicit fix sections found, try to extract from the last paragraph
-	if len(fixSections) == 0 {
-		fixPrompt := extractLastParagraphWithFixKeywords(content)
-		if fixPrompt != "" {
-			return fixPrompt
-		}
-		// Last resort: use the entire content (minus header)
-		return strings.TrimSpace(strings.Join(lines, " "))
-	}
-
-	// Combine all fix sections
-	return strings.Join(fixSections, " ")
-}
-
-// extractLastParagraphWithFixKeywords extracts the last paragraph containing fix-related keywords
-func extractLastParagraphWithFixKeywords(content string) string {
-	paragraphs := strings.Split(content, "\n\n")
-	paragraphs = reverseStrings(paragraphs)
-
-	for _, para := range paragraphs {
-		trimmed := strings.TrimSpace(para)
-		if trimmed == "" {
-			continue
-		}
-
-		paraLower := strings.ToLower(trimmed)
-		keywords := strings.Split(fixKeywords, "|")
-
-		for _, kw := range keywords {
-			if strings.Contains(paraLower, kw) {
-				return strings.Join(strings.Fields(trimmed), " ")
-			}
-		}
-	}
-
-	return ""
+	return needFix, review, nil
 }
 
 // reverseStrings reverses a slice of strings
@@ -191,8 +77,8 @@ func reverseStrings(s []string) []string {
 	return s
 }
 
-// runCrushFix executes crush with the given prompt and streams output
-func runCrushFix(prompt string) error {
+// runCrushFix executes crush with the review and streams output
+func runCrushFix(review string) error {
 	// Check if crush is installed
 	_, err := exec.LookPath("crush")
 	if err != nil {
@@ -202,11 +88,14 @@ func runCrushFix(prompt string) error {
 		return fmt.Errorf("crush binary not found")
 	}
 
+	// Prepend simple instruction to the review
+	prompt := "Fix all critical reviews mentioned in above:\n\n" + review
+
 	// Truncate prompt if too long (avoid command line limits)
 	const maxPromptLength = 10000
 	if len(prompt) > maxPromptLength {
 		fmt.Fprintln(os.Stderr, styles.CreateWarningStyle(
-			fmt.Sprintf("Fix prompt truncated from %d to %d characters", len(prompt), maxPromptLength),
+			fmt.Sprintf("Review truncated from %d to %d characters", len(prompt), maxPromptLength),
 		))
 		prompt = prompt[:maxPromptLength]
 	}

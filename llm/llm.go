@@ -40,6 +40,7 @@ type GenerateRequest struct {
 	SystemPrompt string
 	Context      string
 	Task         string
+	Stream       bool // Enable streaming output to stdout
 }
 
 // GenerateResponse represents the response from the LLM
@@ -55,37 +56,39 @@ func (c *Client) Generate(req GenerateRequest) <-chan GenerateResponse {
 	go func() {
 		defer close(respChan)
 
-		// Initialize markdown renderer
-		markdownRenderer, err := ui.NewMarkdownRenderer()
-		if err != nil {
-			respChan <- GenerateResponse{
-				Content: "",
-				Error:   fmt.Errorf("failed to initialize markdown renderer: %w", err),
-			}
-			return
-		}
-
-		// Start loading animation
-		loadingText := fmt.Sprintf("Analyzing with %s (%s)...", c.config.Provider, c.config.Model)
-		spinner := ui.NewSpinner(loadingText)
-		
-		// Channel to communicate with spinner goroutine
-		spinnerChan := make(chan bool, 1)
-		
-		// Start spinner in goroutine
-		go func() {
-			for {
-				select {
-				case <-spinnerChan:
-					return
-				case <-time.After(100 * time.Millisecond):
-					fmt.Printf("\r%s", styles.Spinner.Render(spinner.Tick()))
+		// Start loading animation if not streaming
+		var spinnerChan chan bool
+		var loadingText string
+		if !req.Stream {
+			_, err := ui.NewMarkdownRenderer()
+			if err != nil {
+				respChan <- GenerateResponse{
+					Content: "",
+					Error:   fmt.Errorf("failed to initialize markdown renderer: %w", err),
 				}
+				return
 			}
-		}()
+
+			loadingText = fmt.Sprintf("Analyzing with %s (%s)...", c.config.Provider, c.config.Model)
+			spinner := ui.NewSpinner(loadingText)
+
+			spinnerChan = make(chan bool, 1)
+
+			go func() {
+				for {
+					select {
+					case <-spinnerChan:
+						return
+					case <-time.After(100 * time.Millisecond):
+						fmt.Printf("\r%s", styles.Spinner.Render(spinner.Tick()))
+					}
+				}
+			}()
+		}
 
 		// Make the API call
 		var content string
+		var err error
 		switch c.config.Provider {
 		case "openai":
 			content, err = c.generateOpenAI(req)
@@ -99,12 +102,15 @@ func (c *Client) Generate(req GenerateRequest) <-chan GenerateResponse {
 			err = fmt.Errorf("unsupported provider: %s", c.config.Provider)
 		}
 
-		// Stop spinner
-		spinnerChan <- true
-		fmt.Printf("\r%s\n", strings.Repeat(" ", len(loadingText)+20)) // Clear spinner line
+		// Stop spinner if we started one
+		if spinnerChan != nil {
+			spinnerChan <- true
+			fmt.Printf("\r%s\n", strings.Repeat(" ", len(loadingText)+20)) // Clear spinner line
+		}
 
-		// Render content with markdown if successful
-		if err == nil {
+		// Render content with markdown if successful and not streaming
+		if err == nil && !req.Stream {
+			markdownRenderer, _ := ui.NewMarkdownRenderer()
 			content = markdownRenderer.RenderResponse(content)
 		}
 

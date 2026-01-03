@@ -347,7 +347,7 @@ func processStagedChange(
 	// Modify system prompt for fix mode
 	systemPrompt := cfg.LLM.SystemPrompt
 	if fixMode {
-		systemPrompt += "\n\nCRITICAL: Your review MUST start with a header line exactly like this:\nNEED FIX: YES   (if changes are required)\nor\nNEED FIX: NO    (if no changes required)\n\nThen provide your review. If NEED FIX: YES, end your review with a clear, actionable fix prompt that can be passed directly to crush."
+		systemPrompt += "\n\nCRITICAL: Your review MUST start with a header line exactly like this:\nNEED FIX: YES   (if changes are required)\nor\nNEED FIX: NO    (if no changes required)\n\nThen provide your review concisely."
 	}
 
 	req := llm.GenerateRequest{
@@ -381,7 +381,7 @@ func launchLLMAsync(
 
 		// Handle fix mode
 		if fixMode {
-			needFix, fixPrompt, review, err := parseFixResponse(resp.Content)
+			needFix, review, err := parseFixResponse(resp.Content)
 			if err != nil {
 				fmt.Println(styles.CreateErrorStyle(fmt.Sprintf("Failed to parse fix response: %v", err)))
 				// Fall back to normal output
@@ -407,7 +407,7 @@ func launchLLMAsync(
 			// Run crush if fix is needed
 			if needFix {
 				fmt.Println()
-				if err := runCrushFix(fixPrompt); err != nil {
+				if err := runCrushFix(review); err != nil {
 					// Already handled in runCrushFix with error messages
 				} else {
 					fmt.Println(styles.CreateInfoStyle("Fix execution complete."))
@@ -479,7 +479,7 @@ func runHeadlessMode(provider string, fixMode bool) {
 	// Modify system prompt for fix mode
 	systemPrompt := cfg.LLM.SystemPrompt
 	if fixMode {
-		systemPrompt += "\n\nCRITICAL: Your review MUST start with a header line exactly like this:\nNEED FIX: YES   (if changes are required)\nor\nNEED FIX: NO    (if no changes required)\n\nThen provide your review. If NEED FIX: YES, end your review with a clear, actionable fix prompt that can be passed directly to crush."
+		systemPrompt += "\n\nCRITICAL: Your review MUST start with a header line exactly like this:\nNEED FIX: YES   (if changes are required)\nor\nNEED FIX: NO    (if no changes required)\n\nThen provide your review concisely."
 	}
 
 	req := llm.GenerateRequest{
@@ -497,7 +497,7 @@ func runHeadlessMode(provider string, fixMode bool) {
 
 	// Handle fix mode
 	if fixMode {
-		needFix, fixPrompt, review, err := parseFixResponse(resp.Content)
+		needFix, review, err := parseFixResponse(resp.Content)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, styles.CreateErrorStyle(fmt.Sprintf("Failed to parse fix response: %v", err)))
 			// Fall back to normal output
@@ -519,7 +519,7 @@ func runHeadlessMode(provider string, fixMode bool) {
 		// Run crush if fix is needed
 		if needFix {
 			fmt.Println()
-			if err := runCrushFix(fixPrompt); err != nil {
+			if err := runCrushFix(review); err != nil {
 				// Already handled in runCrushFix with error messages
 			} else {
 				fmt.Println(styles.CreateInfoStyle("Fix execution complete."))
